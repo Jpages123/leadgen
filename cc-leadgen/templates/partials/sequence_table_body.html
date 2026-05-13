@@ -1,0 +1,68 @@
+{% if sequences %}
+  {% for seq in sequences %}
+  <tr>
+    <td>
+      <div style="font-weight:500;">{{ seq.lead_name or '—' }}</div>
+      {% if seq.lead_email %}
+        <div class="td-small td-muted">{{ seq.lead_email }}</div>
+      {% endif %}
+    </td>
+    <td>
+      {% if seq.channel == 'email' %}
+        <span style="color:var(--accent);">✉ Email</span>
+      {% elif seq.channel == 'whatsapp' %}
+        <span style="color:#25D366;">💬 WhatsApp</span>
+      {% else %}
+        <span class="td-muted">{{ seq.channel }}</span>
+      {% endif %}
+    </td>
+    <td>
+      <span class="td-small">{{ seq.sequence_name or '—' }}</span>
+    </td>
+    <td>
+      <span style="font-weight:600;">{{ seq.step_number }}</span>
+    </td>
+    <td>
+      {% if seq.scheduled_at %}
+        <span class="td-small td-muted">{{ seq.scheduled_at.strftime('%d %b %y %H:%M') if seq.scheduled_at else '—' }}</span>
+      {% else %}
+        <span class="td-muted">—</span>
+      {% endif %}
+    </td>
+    <td>
+      {% if seq.sent_at %}
+        <span class="td-small">{{ seq.sent_at.strftime('%d %b %y %H:%M') if seq.sent_at else '—' }}</span>
+      {% elif seq.status == 'pending' %}
+        <span class="badge badge-discovered">Pending</span>
+      {% else %}
+        <span class="td-muted">—</span>
+      {% endif %}
+    </td>
+    <td>
+      <span class="badge badge-{{ seq.status }}">{{ seq.status.replace('_', ' ') | title }}</span>
+    </td>
+    <td>
+      {% if seq.subject %}
+        <div class="td-small" title="{{ seq.message_body or '' }}">
+          {{ seq.subject[:40] }}{% if seq.subject | length > 40 %}…{% endif %}
+        </div>
+      {% elif seq.message_body %}
+        <div class="td-small td-muted" title="{{ seq.message_body }}">
+          {{ seq.message_body[:40] }}…
+        </div>
+      {% else %}
+        <span class="td-muted">—</span>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+{% else %}
+  <tr>
+    <td colspan="8">
+      <div class="empty-state">
+        <div>No sequences found</div>
+        <p>Outreach sequences will appear here once leads are queued</p>
+      </div>
+    </td>
+  </tr>
+{% endif %}

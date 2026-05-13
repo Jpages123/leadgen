@@ -1,0 +1,11 @@
+<div class="card" style="padding:1rem;margin-bottom:1rem;"
+     hx-get="/discovery/partial"
+     hx-trigger="load delay:2s"
+     hx-target="#job-list"
+     hx-swap="innerHTML"
+>
+  <strong>Job #{{ job_id[:8] if job_id else '?' }} — {{ status }}</strong>
+  <div class="text-sm text-muted mt-1">
+    Found {{ leads_found or 0 }} leads, {{ leads_new or 0 }} new
+  </div>
+</div>

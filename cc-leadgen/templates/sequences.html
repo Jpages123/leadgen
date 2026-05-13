@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}Sequences — Client Compass Lead Gen{% endblock %}
+
+{% block content %}
+<div class="page">
+
+  <div class="page-header">
+    <div>
+      <div class="page-title">Outreach Sequences</div>
+      <div class="page-subtitle">{{ total }} total sequence steps</div>
+    </div>
+  </div>
+
+  <!-- ── Filters ───────────────────────────────── -->
+  <div class="filters-wrap">
+    <form class="filters"
+          hx-get="/sequences/partial"
+          hx-trigger="change"
+          hx-target="#seq-table-body"
+          hx-swap="innerHTML"
+          hx-include=".filters"
+    >
+      <label>Status
+        <select id="status-filter" name="status">
+          <option value="">All</option>
+          {% for s in status_options %}
+          <option value="{{ s }}" {% if s == current_status %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>Channel
+        <select id="channel-filter" name="channel">
+          <option value="">All</option>
+          <option value="email" {% if current_channel == 'email' %}selected{% endif %}>Email</option>
+          <option value="whatsapp" {% if current_channel == 'whatsapp' %}selected{% endif %}>WhatsApp</option>
+        </select>
+      </label>
+
+      <a class="btn btn-outline" href="/sequences">Reset</a>
+    </form>
+  </div>
+
+  <!-- ── Table ─────────────────────────────────── -->
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Lead</th>
+          <th>Channel</th>
+          <th>Sequence</th>
+          <th>Step</th>
+          <th>Scheduled</th>
+          <th>Sent</th>
+          <th>Status</th>
+          <th>Message</th>
+        </tr>
+      </thead>
+      <tbody id="seq-table-body">
+        {% include "partials/sequence_table_body.html" %}
+      </tbody>
+    </table>
+
+    <div class="pagination">
+      <span class="page-info">
+        Showing {{ ((page - 1) * 50) + 1 }}–{{ [page * 50, total] | min }} of {{ total }}
+      </span>
+      <div>
+        {% if page > 1 %}
+          <a hx-get="/sequences/partial?page={{ page - 1 }}&status={{ current_status }}&channel={{ current_channel }}"
+             hx-target="#seq-table-body"
+             hx-swap="innerHTML"
+          >← Prev</a>
+        {% endif %}
+
+        <span style="padding: 0 0.5rem;">Page {{ page }} of {{ total_pages }}</span>
+
+        {% if page < total_pages %}
+          <a hx-get="/sequences/partial?page={{ page + 1 }}&status={{ current_status }}&channel={{ current_channel }}"
+             hx-target="#seq-table-body"
+             hx-swap="innerHTML"
+          >Next →</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

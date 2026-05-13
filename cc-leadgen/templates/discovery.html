@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}Discovery — Client Compass Lead Gen{% endblock %}
+
+{% block content %}
+<div class="page">
+
+  <div class="page-header">
+    <div>
+      <div class="page-title">Discovery Jobs</div>
+      <div class="page-subtitle">Lead source scanning history</div>
+    </div>
+    <button
+      class="btn btn-primary"
+      hx-post="/discovery/run"
+      hx-target="#job-status"
+      hx-swap="innerHTML"
+      hx-disabled-elt="this"
+    >
+      <span class="spinner" style="display:none;" id="run-spinner"></span>
+      ▶ Run Discovery
+    </button>
+  </div>
+
+  <!-- ── Job Status ────────────────────────────── -->
+  <div id="job-status"></div>
+
+  <!-- ── Recent Jobs ───────────────────────────── -->
+  <div class="card mt-4">
+    <div class="card-title mb-4">Recent Jobs</div>
+    <div id="job-list">
+      {% include "partials/discovery_job_list.html" %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

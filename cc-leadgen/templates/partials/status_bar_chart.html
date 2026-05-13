@@ -1,0 +1,18 @@
+{% if status_counts %}
+  {% set max_val = status_counts.values() | max %}
+  {% set total_count = totals.total or 1 %}
+  {% for status, count in status_counts.items() | sort(reverse=true) %}
+    <div class="bar-chart">
+      <div class="bar-row">
+        <span class="bar-label">{{ status.replace('_', ' ') | title }}</span>
+        <div class="bar-track">
+          <div class="bar-fill" style="width: {{ (count / max_val * 100) | round(1) }}%"></div>
+        </div>
+        <span class="bar-count">{{ count }}</span>
+        <span class="bar-pct">{{ (count / total_count * 100) | round(1) }}%</span>
+      </div>
+    </div>
+  {% endfor %}
+{% else %}
+  <div class="empty-state"><p>No leads yet</p></div>
+{% endif %}

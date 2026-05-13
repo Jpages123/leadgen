@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Leads — Client Compass Lead Gen{% endblock %}
+
+{% block content %}
+<div class="page">
+
+  <div class="page-header">
+    <div>
+      <div class="page-title">Leads</div>
+      <div class="page-subtitle">{{ total }} total leads</div>
+    </div>
+  </div>
+
+  <!-- ── Filters ───────────────────────────────── -->
+  <div class="filters-wrap">
+    <div class="filters"
+         hx-get="/leads/partial"
+         hx-trigger="change"
+         hx-target="#lead-table-body"
+         hx-swap="innerHTML"
+         hx-include=".filters"
+    >
+      <label>Status
+        <select id="status-filter" name="status" onchange="this.form.requestSubmit()">
+          <option value="">All</option>
+          {% for s in status_options %}
+          <option value="{{ s }}" {% if s == current_status %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>Source
+        <select id="source-filter" name="source" onchange="this.form.requestSubmit()">
+          <option value="">All</option>
+          {% for s in source_options %}
+          <option value="{{ s }}" {% if s == current_source %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>Search
+        <input
+          type="search"
+          name="search"
+          placeholder="business name, city, owner..."
+          value="{{ current_search }}"
+          hx-get="/leads/partial"
+          hx-trigger="keyup changed delay:400ms"
+          hx-include=".filters"
+          hx-target="#lead-table-body"
+          hx-swap="innerHTML"
+        >
+      </label>
+
+      <a class="btn btn-outline" href="/leads">Reset</a>
+    </div>
+  </div>
+
+  <!-- ── Table ─────────────────────────────────── -->
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Business</th>
+          <th>Owner</th>
+          <th>Contact</th>
+          <th>Location</th>
+          <th>Source</th>
+          <th>Score</th>
+          <th>Status</th>
+          <th>Discovered</th>
+        </tr>
+      </thead>
+      <tbody id="lead-table-body">
+        {% include "partials/lead_table_body.html" %}
+      </tbody>
+    </table>
+
+    <!-- ── Pagination ──────────────────────────── -->
+    <div class="pagination">
+      <span class="page-info">
+        Showing {{ ((page - 1) * 50) + 1 }}–{{ [page * 50, total] | min }} of {{ total }}
+      </span>
+      <div>
+        {% if page > 1 %}
+          <a href="/leads/partial?page={{ page - 1 }}&status={{ current_status }}&source={{ current_source }}&search={{ current_search }}"
+             hx-get="/leads/partial?page={{ page - 1 }}&status={{ current_status }}&source={{ current_source }}&search={{ current_search }}"
+             hx-target="#lead-table-body"
+             hx-swap="innerHTML"
+          >← Prev</a>
+        {% endif %}
+
+        <span style="padding: 0 0.5rem;">Page {{ page }} of {{ total_pages }}</span>
+
+        {% if page < total_pages %}
+          <a href="/leads/partial?page={{ page + 1 }}&status={{ current_status }}&source={{ current_source }}&search={{ current_search }}"
+             hx-get="/leads/partial?page={{ page + 1 }}&status={{ current_status }}&source={{ current_source }}&search={{ current_search }}"
+             hx-target="#lead-table-body"
+             hx-swap="innerHTML"
+          >Next →</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,62 @@
+{% if jobs %}
+  <table style="width:100%;">
+    <thead>
+      <tr>
+        <th>Job</th>
+        <th>Source</th>
+        <th>Query</th>
+        <th>Status</th>
+        <th>Leads Found</th>
+        <th>New</th>
+        <th>Started</th>
+        <th>Completed</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr>
+        <td>
+          <span class="td-small" style="font-family:monospace;">{{ job.id.hex[:8] }}</span>
+        </td>
+        <td>
+          <span class="td-small">{{ job.source }}</span>
+        </td>
+        <td>
+          <span class="td-small">{{ job.query[:60] }}{% if job.query | length > 60 %}…{% endif %}</span>
+        </td>
+        <td>
+          <span class="badge badge-{{ job.status }}">{{ job.status | title }}</span>
+        </td>
+        <td>
+          <span style="font-weight:600;">{{ job.leads_found or 0 }}</span>
+        </td>
+        <td>
+          <span style="color:var(--green);">{{ job.leads_new or 0 }}</span>
+        </td>
+        <td>
+          {% if job.started_at %}
+            {# started_at is stored as ISO string, e.g. "2026-05-13T18:22:10" #}
+            <span class="td-small td-muted">{{ job.started_at[:16] }}</span>
+          {% else %}
+            <span class="td-muted">—</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if job.completed_at %}
+            <span class="td-small td-muted">{{ job.completed_at[:16] }}</span>
+          {% elif job.status == 'running' %}
+            <span class="spinner" style="display:inline-block;"></span>
+          {% else %}
+            <span class="td-muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <div class="empty-state">
+    <div>No discovery jobs yet</div>
+    <p>Click "Run Discovery" to scan for leads</p>
+  </div>
+{% endif %}

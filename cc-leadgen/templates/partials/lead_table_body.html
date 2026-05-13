@@ -1,0 +1,72 @@
+{% if leads %}
+  {% for lead in leads %}
+  <tr>
+    <td>
+      <div style="font-weight:500;">{{ lead.business_name }}</div>
+      {% if lead.business_type %}
+        <div class="td-muted td-small">{{ lead.business_type }}</div>
+      {% endif %}
+    </td>
+    <td>
+      {% if lead.owner_name %}
+        {{ lead.owner_name }}
+      {% else %}
+        <span class="td-muted">—</span>
+      {% endif %}
+    </td>
+    <td>
+      {% if lead.email %}
+        <div class="td-small"><a href="mailto:{{ lead.email }}">{{ lead.email }}</a></div>
+      {% endif %}
+      {% if lead.phone %}
+        <div class="td-small td-muted">{{ lead.phone }}</div>
+      {% endif %}
+      {% if not lead.email and not lead.phone %}
+        <span class="td-muted">—</span>
+      {% endif %}
+    </td>
+    <td>
+      {% if lead.city %}
+        <div>{{ lead.city }}</div>
+        {% if lead.province %}
+          <div class="td-small td-muted">{{ lead.province }}</div>
+        {% endif %}
+      {% else %}
+        <span class="td-muted">—</span>
+      {% endif %}
+    </td>
+    <td>
+      <span class="td-small td-muted">{{ lead.source }}</span>
+    </td>
+    <td>
+      <span style="font-weight:600;">{{ lead.score }}</span>
+      {% if lead.score >= 60 %}
+        <span class="td-muted td-small">high</span>
+      {% elif lead.score >= 40 %}
+        <span class="td-muted td-small">med</span>
+      {% else %}
+        <span class="td-muted td-small">low</span>
+      {% endif %}
+    </td>
+    <td>
+      <span class="badge badge-{{ lead.status }}">{{ lead.status.replace('_', ' ') | title }}</span>
+    </td>
+    <td>
+      {% if lead.discovered_at %}
+        <span class="td-small td-muted">{{ lead.discovered_at.strftime('%d %b %y') if lead.discovered_at else '—' }}</span>
+      {% else %}
+        <span class="td-muted">—</span>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+{% else %}
+  <tr>
+    <td colspan="8">
+      <div class="empty-state">
+        <div>No leads found</div>
+        <p>Try adjusting your filters</p>
+      </div>
+    </td>
+  </tr>
+{% endif %}

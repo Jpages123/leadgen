@@ -1,0 +1,37 @@
+<div class="metrics-grid">
+  <div class="card">
+    <div class="card-title">Total Leads</div>
+    <div class="card-value">{{ totals.total or 0 }}</div>
+    <div class="card-sub">all time</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Awaiting Outreach</div>
+    <div class="card-value">{{ totals.outreach_queued or 0 }}</div>
+    <div class="card-sub">queued</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Replied</div>
+    <div class="card-value">{{ totals.responded or 0 }}</div>
+    <div class="card-sub">+ {{ totals.interested or 0 }} interested</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Synced to CRM</div>
+    <div class="card-value">{{ totals.synced or 0 }}</div>
+    <div class="card-sub">converted</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Emails Sent</div>
+    <div class="card-value">{{ totals.emails_sent or 0 }}</div>
+    <div class="card-sub">all sequences</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Active Jobs</div>
+    <div class="card-value">{{ totals.running_jobs or 0 }}</div>
+    <div class="card-sub">discovery</div>
+  </div>
+</div>

@@ -1,0 +1,16 @@
+{% if discovery_trend %}
+  {% set max_val = discovery_trend.values() | max if discovery_trend.values() | list else 1 %}
+  {% for date, count in discovery_trend.items() | sort %}
+    <div class="bar-chart">
+      <div class="bar-row">
+        <span class="bar-label">{{ date }}</span>
+        <div class="bar-track">
+          <div class="bar-fill" style="width: {{ (count / max_val * 100) | round(1) }}%"></div>
+        </div>
+        <span class="bar-count">{{ count }}</span>
+      </div>
+    </div>
+  {% endfor %}
+{% else %}
+  <div class="empty-state"><p>No discovery data in the last 7 days</p></div>
+{% endif %}

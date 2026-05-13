@@ -1,0 +1,59 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Docker
+.dockerignore
+
+# Environment (contains secrets)
+.env
+!.env.example
+
+# Logs
+*.log
+
+# Alembic
+alembic.ini
+
+# Coverage
+htmlcov/
+.coverage
+.pytest_cache/
+
+# Node / pi
+node_modules/
+.pnp
+.pnp.js
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+# Celery
+celerybeat-schedule
+
+# SQLite database
+*.db
+*.sqlite
+
+# Core files (runtime artifacts)
+core.*
+
