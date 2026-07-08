@@ -480,14 +480,40 @@ def audit_lead_task(self, lead_id: str) -> dict:
                     setattr(db_lead, k, v)
                 session.add(db_lead)
 
-        # Queue mockup generation for high-scoring leads
+        # Queue mockup generation for high-scoring leads.
+        # Tier-1 gate (2026-07-08): only queue if the lead has at least one
+        # contact channel. Mockups for unreachable leads waste Cloudflare
+        # Pages builds. If pitch ≥ threshold but no contact info, set a flag
+        # so enrichment can re-trigger after it fills a channel.
         cfg = _get_settings()
         threshold = getattr(cfg, "mockup_pitch_score_threshold", 70)
         pitch_score = updates.get("web_pitch_score", 0) or 0
         if pitch_score >= threshold:
-            from app.workers.mockup_generator import generate_mockup
-            generate_mockup.delay(str(lead.id))
-            log.info("mockup_queued", lead_id=str(lead.id), pitch_score=pitch_score)
+            has_contact = bool(
+                getattr(lead, "email", None)
+                or getattr(lead, "phone", None)
+                or getattr(lead, "whatsapp_number", None)
+            )
+            if has_contact:
+                from app.workers.mockup_generator import generate_mockup
+                generate_mockup.delay(str(lead.id))
+                log.info(
+                    "mockup_queued",
+                    lead_id=str(lead.id),
+                    pitch_score=pitch_score,
+                )
+            else:
+                # No contact info — defer until enrichment fills a channel.
+                with sync_session_scope() as session:
+                    db_lead = session.get(Lead, lead.id)
+                    if db_lead:
+                        db_lead.mockup_eligible_pending_contact = True
+                        session.add(db_lead)
+                log.info(
+                    "mockup_deferred_no_contact",
+                    lead_id=str(lead.id),
+                    pitch_score=pitch_score,
+                )
 
         return {"status": "ok", "lead_id": lead_id, "pitch_score": pitch_score}
 

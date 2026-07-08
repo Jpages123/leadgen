@@ -200,6 +200,50 @@ def crawl_lead_website(lead: Lead) -> dict:
 
 # ── Celery Tasks ───────────────────────────────────────────────────────────────
 
+
+
+
+def _maybe_queue_deferred_mockup(lead_id: str, pitch_score: int | None, threshold: int = 70) -> None:
+    """If a lead was flagged for deferred mockup during audit, queue it now.
+
+    Called from enrich_website_crawl and enrich_yep_mall_leads after they
+    successfully fill in a contact channel. Tier-1 fix (2026-07-08): the
+    audit worker sets mockup_eligible_pending_contact=True when pitch ≥
+    threshold but no contact info was present at audit time. This helper
+    is the second half of that handshake.
+
+    Idempotent: clears the flag before queuing so a second enrichment call
+    (e.g. both crawl AND yep_mall fire) doesn't generate two mockups.
+    """
+    if not pitch_score or pitch_score < threshold:
+        return
+    try:
+        with sync_session_scope() as session:
+            db_lead = session.get(Lead, lead_id)
+            if not db_lead:
+                return
+            if not db_lead.mockup_eligible_pending_contact:
+                return
+            # Sanity re-check: must still have at least one contact channel
+            if not (db_lead.email or db_lead.phone or db_lead.whatsapp_number):
+                return
+            db_lead.mockup_eligible_pending_contact = False
+            session.add(db_lead)
+        from app.workers.mockup_generator import generate_mockup
+        generate_mockup.delay(str(lead_id))
+        log.info(
+            "deferred_mockup_queued",
+            lead_id=lead_id,
+            pitch_score=pitch_score,
+        )
+    except Exception as exc:
+        log.warning(
+            "deferred_mockup_queue_failed",
+            lead_id=lead_id,
+            error=str(exc),
+        )
+
+
 @shared_task(bind=True, name="app.workers.enrichment.tasks.enrich_yep_mall_leads")
 def enrich_yep_mall_leads(self, batch_size: int = 100, delay: float = 1.0) -> dict:
     """
@@ -249,6 +293,8 @@ def enrich_yep_mall_leads(self, batch_size: int = 100, delay: float = 1.0) -> di
                         session.add(db_lead)
                 results.append({"seller_id": seller_id, "updates": updates})
                 log.info("yep_detail_applied", seller_id=seller_id, updates=list(updates.keys()))
+                # Tier-1 fix (2026-07-08): see _maybe_queue_deferred_mockup
+                _maybe_queue_deferred_mockup(str(lead.id), lead.web_pitch_score)
         else:
             results.append({"seller_id": seller_id, "error": "detail_fetch_failed"})
 
@@ -309,6 +355,9 @@ def enrich_website_crawl(self, batch_size: int = 50) -> dict:
                         if k not in ("skipped", "lead_id"):
                             setattr(db_lead, k, v)
                     session.add(db_lead)
+            # Tier-1 fix (2026-07-08): if the audit flagged this lead for a
+            # deferred mockup, queue it now that we have a contact channel.
+            _maybe_queue_deferred_mockup(str(lead.id), lead.web_pitch_score)
         results.append(result)
         processed += 1
         if processed < len(leads):

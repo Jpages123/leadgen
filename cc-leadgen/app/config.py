@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     # ── Google Maps ───────────────────────────────────────────────────
     google_maps_api_key: str = ""
+    google_places_api_key: str = ""
     google_maps_daily_budget_usd: float = 10.0
     google_maps_rate_limit: int = 2
 
@@ -62,13 +63,43 @@ class Settings(BaseSettings):
     discord_alert_on_reply: bool = True
     discord_alert_on_error: bool = True
 
+    # ── Mockup Generation ──────────────────────────────────────────────────────
+    cloudflare_api_token: str = ""
+    mockup_pitch_score_threshold: int = 70
+    mockup_pi_timeout: int = 60
+
     # ── Unsubscribe JWT ───────────────────────────────────────────────
     unsubscribe_secret: str = "change-me"
+
+    # ── Outreach Safety Gates ────────────────────────────────────────
+    # 'test' = only send to TEST_EMAIL_WHITELIST (comma-sep CSV, no real leads)
+    # 'live' = send to all outreach_queued leads
+    send_mode: Literal["test", "live"] = "test"
+    test_email_whitelist_csv: str = "jpages123@gmail.com,jpages123@proton.me"
+    blocked_email_domains_csv: str = "gmail.com,proton.me,protonmail.com,yahoo.com,hotmail.com,outlook.com,icloud.com,mail.com,aol.com"
 
     # ── Cron Schedule ─────────────────────────────────────────────────
     discovery_schedule_hour: int = 8
     outreach_schedule_minute: str = "*/30"
     response_poll_interval_minutes: int = 15
+
+    # ── Outreach Safety Gates ────────────────────────────────────────
+    # CSV strings parsed into lists via properties below
+    send_mode: Literal["test", "live"] = "test"
+    test_email_whitelist_csv: str = "jpages123@gmail.com,jpages123@proton.me"
+    blocked_email_domains_csv: str = "gmail.com,proton.me,protonmail.com,yahoo.com,hotmail.com,outlook.com,icloud.com,mail.com,aol.com"
+
+    @property
+    def test_email_whitelist(self) -> list[str]:
+        """Parse comma-separated test email list."""
+        raw = self.test_email_whitelist_csv or ""
+        return [x.strip() for x in raw.split(",") if x.strip()]
+
+    @property
+    def blocked_email_domains(self) -> list[str]:
+        """Parse comma-separated blocked domain list."""
+        raw = self.blocked_email_domains_csv or ""
+        return [x.strip() for x in raw.split(",") if x.strip()]
 
     @property
     def database_url_sync(self) -> str:

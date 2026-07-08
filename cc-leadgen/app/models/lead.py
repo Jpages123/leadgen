@@ -141,6 +141,11 @@ class Lead(Base, UUIDPrimaryKey, Timestamps):
         nullable=True,
     )
 
+    mockup_eligible_pending_contact: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+
+    # Relationships
     # Relationships
     sequences: Mapped[list["OutreachSequence"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
     events: Mapped[list["LeadEvent"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
