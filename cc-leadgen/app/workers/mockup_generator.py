@@ -27,9 +27,10 @@ from celery import shared_task
 from app.config import get_settings
 from app.db.sync_session import sync_session_scope
 from app.models import Lead
-from app.utils.client_ts_generator import generate_client_ts, generate_brand_ts, slugify
+from app.utils.client_ts_generator import generate_client_ts, generate_brand_ts, generate_brand_ts_for_recommendation, slugify
 from app.utils.cloudflare_deploy import deploy_mockup
 from app.utils.copy_generator import generate_copy
+from app.utils.template_analyzer import analyze_site_for_mockup
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -234,7 +235,12 @@ def generate_mockup(self, lead_id: str) -> dict:
                 session.add(lead)
             return {"status": "skipped", "reason": "no_contact_info"}
 
-        if lead.mockup_status in ("pending_approval", "approved", "generating"):
+        # Already in progress by another task dispatch
+        if lead.mockup_status == "generating":
+            return {"status": "skipped", "reason": "already_generating"}
+
+        # Skip leads already past the generation gate
+        if lead.mockup_status in ("pending_approval", "approved", "rejected"):
             log.info("mockup_skipped_already_processed", lead_id=lead_id, status=lead.mockup_status)
             return {"status": "skipped", "reason": lead.mockup_status}
 
@@ -253,6 +259,28 @@ def generate_mockup(self, lead_id: str) -> dict:
                 "status": "skipped",
                 "reason": "needs_url_review",
                 "issue": getattr(lead, "url_quality_issue", None),
+            }
+
+        # Skip excluded verticals (salons / hair / nail / beauty).
+        # These verticals need a booking system — out of scope for web revamp.
+        # Added 2026-07-11.
+        import re
+        _EXCLUDED_VERTICAL_RE = re.compile(r"hair|nail|beauty|barber|salon|nails", re.IGNORECASE)
+        _EXCLUDED_TYPES = {"hair salon", "nail salon", "beauty salon", "barber shop", "beauty"}
+        if (
+            _EXCLUDED_VERTICAL_RE.search(lead.business_name or "")
+            or (lead.business_type or "").lower() in _EXCLUDED_TYPES
+        ):
+            log.warning(
+                "mockup_skipped_excluded_vertical",
+                lead_id=lead_id,
+                business_type=lead.business_type,
+                business_name=lead.business_name,
+            )
+            return {
+                "status": "skipped",
+                "reason": "excluded_vertical",
+                "vertical": lead.business_type,
             }
 
         lead.mockup_status = "generating"
@@ -295,6 +323,30 @@ def generate_mockup(self, lead_id: str) -> dict:
             timeout=getattr(settings, "mockup_pi_timeout", 60),
         )
 
+        # ── Step 1b: Pi analyzes site for template + visual treatment ─────
+        recommendation = analyze_site_for_mockup(
+            business_name=snap["business_name"],
+            vertical=vertical,
+            city=snap["city"],
+            website=snap["website"],
+            website_platform=snap["website_platform"],
+            scraped_brand_color=snap["scraped_brand_color"],
+            scraped_gallery_paths=snap["scraped_gallery_paths"],
+            pagespeed_mobile=snap["pagespeed_mobile"],
+            site_copyright_year=getattr(lead, "site_copyright_year", None) if lead else None,
+            google_rating=snap["google_rating"],
+            google_review_count=snap["google_review_count"],
+            timeout=getattr(settings, "mockup_pi_timeout", 60),
+        )
+        # Update vertical to chosen template (used downstream for fallback decisions)
+        vertical = recommendation["template"]
+        log.info(
+            "mockup_template_recommended",
+            lead_id=lead_id,
+            template=vertical,
+            rationale=recommendation["rationale"][:160],
+        )
+
         # ── Step 2: Generate config files ────────────────────────────────────
         client_ts = generate_client_ts(
             business_name=snap["business_name"],
@@ -315,10 +367,10 @@ def generate_mockup(self, lead_id: str) -> dict:
             hero_image_path=snap["scraped_hero_path"],
             gallery_paths=snap["scraped_gallery_paths"] or [],
         )
-        brand_ts = generate_brand_ts(
+        brand_ts = generate_brand_ts_for_recommendation(
+            recommendation=recommendation,
             vertical=vertical,
-            accent_color=snap["scraped_brand_color"],  # falls back to vertical default if None
-            logo_path="/images/logo.jpg",   # the file we just copied above
+            logo_path="/images/logo.jpg",
             hero_image_path="/images/hero.jpg",
         )
 
