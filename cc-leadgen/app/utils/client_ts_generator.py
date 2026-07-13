@@ -131,6 +131,22 @@ VERTICAL_DEFAULTS: dict[str, dict] = {
         ],
         "trustBadges": ["NHBRC Registered", "Fully Insured", "Free Quotations"],
     },
+
+    # CREATIVE alias: if any caller accidentally passes template='creative'
+    # (visual style) instead of vertical='photography' (business type), better
+    # to show photographer content than trades content.
+    "creative": {
+        "accent": "#6366f1",
+        "fontHeading": "Playfair Display",
+        "heroStyle": "photo",
+        "stats": [
+            {"value": "300+", "label": "Shoots Completed"},
+            {"value": "50+", "label": "Weddings Shot"},
+            {"value": "7+", "label": "Years Experience"},
+            {"value": "5★", "label": "Google Rating"},
+        ],
+        "trustBadges": ["Professional Equipment", "Print-Ready Files", "Quick Turnaround"],
+    },
 }
 
 _DEFAULT_VERTICAL = "trades"

@@ -339,11 +339,12 @@ def generate_mockup(self, lead_id: str) -> dict:
             timeout=getattr(settings, "mockup_pi_timeout", 60),
         )
         # Update vertical to chosen template (used downstream for fallback decisions)
-        vertical = recommendation["template"]
+        template = recommendation["template"]
         log.info(
             "mockup_template_recommended",
             lead_id=lead_id,
-            template=vertical,
+            template=template,
+            vertical=vertical,
             rationale=recommendation["rationale"][:160],
         )
 
