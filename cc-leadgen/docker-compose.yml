@@ -1,0 +1,100 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: leadgen
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d leadgen"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+
+  worker:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      NPM_CONFIG_PREFIX: /root/.npm-global
+      PI_CODING_AGENT_DIR: /app/.pi-docker/agent
+      SMTP_HOST: smtp.zoho.com
+      SMTP_USER: outreach@clientcompass.co.za
+      SMTP_PASS: xSBicRfhdLQ9
+      SMTP_FROM_EMAIL: outreach@clientcompass.co.za
+    command: >-
+      sh -c "/app/.venv/bin/python -m playwright install chromium &&
+           cd /app &&
+           exec celery -A app.workers.celery_app worker --loglevel=info --concurrency=12 -Q celery,discovery,enrichment,scoring,outreach,response"
+    # Runtime Playwright install ensures the chromium browser version always
+    # matches the Python playwright lib version, even if the lib is upgraded
+    # at runtime. Idempotent — playwright only downloads if version differs.
+    volumes:
+      - .:/app
+      - /home/this0ne/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
+      - /home/this0ne/.ssh/known_hosts:/root/.ssh/known_hosts:ro
+      - /home/this0ne/.npm-global:/root/.npm-global:ro
+      # Mockup-builder skill (TypeScript extension) — bind-mounted so edits
+      # on the host take effect without rebuilding the image.
+      - /home/this0ne/.pi/agent/extensions/mockup-builder.ts:/app/.pi-docker/agent/extensions/mockup-builder.ts:ro
+      # cc-site-template (Astro project with 3 hero variants). Local copy
+      # on the laptop is the source of truth; container reads via ro mount.
+      - /tmp/template-check:/opt/templates/cc-site-template:ro
+
+  beat:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    command: >-
+      python -m celery -A app.workers.celery_app beat --loglevel=info
+    volumes:
+      - .:/app
+
+volumes:
+  postgres_data:
