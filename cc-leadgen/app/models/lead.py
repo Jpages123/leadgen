@@ -93,10 +93,17 @@ class Lead(Base, UUIDPrimaryKey, Timestamps):
 
 
     # Mockup generation fields (migration 003)
-    # mockup_status: none | generating | pending_approval | approved | rejected | failed
+    # mockup_status: none | queued | generating | pending_approval | approved | rejected | failed
     mockup_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     mockup_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     mockup_status: Mapped[str] = mapped_column(String(30), nullable=False, default="none")
+
+    # Operator-curated flag for the SELECT page (migration 008).
+    # When ANY lead has this set TRUE, /admin/mockup-lead-selection shows
+    # ONLY those leads (with a "show all" fallback toggle).
+    mockup_targeted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
 
     # Scraped mockup assets (migration 004) — populated by web_audit.py
     # when the scraper visits the lead's actual website (not booking/social).
@@ -125,6 +132,8 @@ class Lead(Base, UUIDPrimaryKey, Timestamps):
     # Actual <h1> text. Separate from notes so we can run generic-H1 detection
     # without parsing the audit log. NULL = audit didn't capture it.
     h1_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    services_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # True if the page contains known template-leftover copy ("OUR DRESSES",
     # "Join our awesome team", "lorem ipsum", etc.) — strong "owner never
     # touches this" signal.
