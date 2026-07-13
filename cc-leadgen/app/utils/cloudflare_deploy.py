@@ -51,9 +51,10 @@ def _build_env(cf_token: str) -> dict[str, str]:
 
 
 
-def _ensure_pages_project(project_name: str, cf_token: str) -> None:
+def _ensure_pages_project(project_name: str, cf_token: str | None = None) -> None:
     """Create the Cloudflare Pages project if it does not exist yet."""
     settings = get_settings()
+    cf_token = cf_token or settings.cloudflare_api_token
     account_id = settings.cloudflare_account_id if hasattr(settings, "cloudflare_account_id") else "ee0ec95e295ef30d379c2c35febd6591"
     headers = {
         "Authorization": f"Bearer {cf_token}",
@@ -81,8 +82,10 @@ def _ensure_pages_project(project_name: str, cf_token: str) -> None:
     log.info("pages_project_created", project=project_name)
 
 
-def deploy_pages(dist_dir: str, project_name: str, cf_token: str) -> str:
+def deploy_pages(dist_dir: str, project_name: str, cf_token: str | None = None) -> str:
     """Deploy dist/ to Cloudflare Pages. Returns the live pages.dev URL."""
+    if cf_token is None:
+        cf_token = get_settings().cloudflare_api_token
     wrangler = _resolve_wrangler()
     env = _build_env(cf_token)
 
@@ -110,7 +113,7 @@ def deploy_pages(dist_dir: str, project_name: str, cf_token: str) -> str:
     return f"https://{project_name}.pages.dev"
 
 
-def create_dns_record(slug: str, cf_token: str) -> str:
+def create_dns_record(slug: str, cf_token: str | None = None) -> str:
     """Create proxied A record demo-<slug>.clientcompass.co.za → 192.0.2.1.
 
     The demo-router Cloudflare Worker intercepts all *.clientcompass.co.za
@@ -118,6 +121,8 @@ def create_dns_record(slug: str, cf_token: str) -> str:
 
     Returns the full demo URL.
     """
+    if cf_token is None:
+        cf_token = get_settings().cloudflare_api_token
     record_name = f"demo-{slug}"
     demo_url = f"https://{record_name}.clientcompass.co.za"
 
