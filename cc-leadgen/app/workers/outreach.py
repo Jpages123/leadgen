@@ -3,6 +3,11 @@ Outreach worker — email sequences via SMTP, reply handling via IMAP.
 
 Phase 3 (Email) + Phase 4 (Response Handling) combined.
 SMTP: Zoho (outreach@clientcompass.co.za)
+
+Safety gates (send_mode = 'test' defaults on):
+  - SQL query filter: only whitelisted emails selected from DB
+  - SMTP-level defence in depth: any non-whitelisted email skipped at send time
+  Flip to live mode by setting SEND_MODE=live in .env
 """
 from __future__ import annotations
 
@@ -13,18 +18,18 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
 from email.mime.text import MIMEText
-from email.header import decode_header
 from typing import Optional
 
 from celery import shared_task
-from jinja2 import Template
-from sqlalchemy import and_, func, select
+from sqlalchemy import func, select
 
 from app.config import get_settings
 from app.db.sync_session import sync_session_scope
 from app.models import Lead, LeadEvent, OutreachSequence, OutreachTemplate
 from app.utils.logger import get_logger
+from app.utils.email_builder import render_email_for_lead
 
 log = get_logger(__name__)
 settings = get_settings()
@@ -53,146 +58,100 @@ def _build_email(from_email: str, to_email: str, subject: str,
         msg["In-Reply-To"] = in_reply_to
         msg["References"] = in_reply_to
 
-    # Plain text
     msg.attach(MIMEText(text_body, "plain", "utf-8"))
-    # HTML with tracking pixel
     tracking_pixel = (
         f'<img src="https://cc-leadgen.clientcompass.co.za/track/'
         f'{hashlib.md5(to_email.encode()).hexdigest()}.png" width="1" height="1" />'
     )
     html_with_tracking = html_body.replace("</body>", tracking_pixel + "</body>")
     msg.attach(MIMEText(html_with_tracking, "html", "utf-8"))
-
     return msg
 
 
-# ── Template Rendering ────────────────────────────────────────────────────────
 
-EMAIL_TEMPLATES = {
-    "hair_beauty": """
-Hi {{ owner_name or 'there' }},
+def _build_email_with_pdf(
+    from_email: str,
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str,
+    pdf_path: str | None = None,
+    in_reply_to: str = None,
+    lead=None,
+) -> MIMEMultipart:
+    """Build a MIME email with optional PDF attachment.
 
-Saw {{ business_name }} on Yep Mall — looks like you're doing great work.
+    The ``pdf_path`` argument is the DB-stored path (often a stale
+    ``/tmp/cc_reports/<slug>.pdf`` that may no longer exist on disk).
+    Resolution and on-demand regeneration is delegated to
+    ``report_assets.resolve`` / ``regenerate_pdf_for_lead`` (Session 15
+    fix). Pass ``lead`` to enable on-demand regen when the file is
+    missing; pass ``None`` to fall back to the legacy "log and skip"
+    behaviour.
+    """
+    # Resolve the PDF through the durable-first lookup. Same chain as
+    # email_draft.send_email_draft: durable → legacy → on-demand regen.
+    from pathlib import Path as _Path
+    resolved_pdf: "_Path | None" = None
+    if pdf_path:
+        try:
+            from app.utils.report_assets import resolve as _resolve_report
+            stem = _Path(pdf_path).stem
+            resolved_pdf = _resolve_report(stem)
+        except Exception as exc:
+            log.warning("outreach_pdf_resolve_failed", path=pdf_path, error=str(exc))
 
-Quick question: do clients book or message you through WhatsApp? If so, how are you managing it when you're with a client?
+    if resolved_pdf is None and lead is not None:
+        try:
+            from app.utils.report_assets import regenerate_pdf_for_lead
+            regenerated = regenerate_pdf_for_lead(lead)
+            if regenerated:
+                resolved_pdf = _Path(regenerated)
+                log.info("outreach_pdf_regen_inline", path=regenerated)
+        except Exception as exc:
+            log.warning("outreach_pdf_regen_failed", error=str(exc))
 
-Most hair and beauty salons I talk to say WhatsApp is their busiest channel — but also the hardest to keep up with.
+    if resolved_pdf and resolved_pdf.exists() and resolved_pdf.stat().st_size > 0:
+        outer = MIMEMultipart("mixed")
+        outer["From"] = f"{settings.smtp_from_name} <{from_email}>"
+        outer["To"] = to_email
+        outer["Subject"] = subject
+        outer["Message-ID"] = f"<{uuid.uuid4().hex}@outreach.clientcompass.co.za>"
+        if in_reply_to:
+            outer["In-Reply-To"] = in_reply_to
+            outer["References"] = in_reply_to
 
-We built a tool specifically for that — I can show you how in 10 minutes if you're curious.
+        # Alternative part (text + html)
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(text_body, "plain", "utf-8"))
+        tracking_pixel = (
+            f'<img src="https://cc-leadgen.clientcompass.co.za/track/'
+            f'{hashlib.md5(to_email.encode()).hexdigest()}.png" width="1" height="1" />'
+        )
+        html_with_tracking = html_body.replace("</body>", tracking_pixel + "</body>")
+        alt.attach(MIMEText(html_with_tracking, "html", "utf-8"))
+        outer.attach(alt)
 
-Reply YES to get a free walkthrough on WhatsApp, or just reply with any questions.
+        # PDF attachment
+        try:
+            import os
+            with open(resolved_pdf, "rb") as f:
+                pdf_data = f.read()
+            filename = os.path.basename(resolved_pdf).replace("-", "_")
+            pdf_part = MIMEApplication(pdf_data, _subtype="pdf")
+            pdf_part.add_header("Content-Disposition", "attachment", filename=f"web_audit_{filename}")
+            outer.attach(pdf_part)
+        except Exception as exc:
+            log.warning("pdf_attach_failed", path=str(resolved_pdf), error=str(exc))
 
-Talk soon,
-{{ sender_name }}
-Client Compass
-""",
-    "cleaning": """
-Hi {{ owner_name or 'there' }},
+        return outer
+    elif pdf_path:
+        # Original path was set but no PDF could be sourced — fall back to
+        # the plain email without attachment, but log clearly so operators
+        # can spot the pattern if it recurs.
+        log.warning("outreach_pdf_skipped", reason="missing_or_empty", original_path=pdf_path)
 
-Found {{ business_name }} on Yep Mall — great to see you offering cleaning services.
-
-Quick question: how do you handle enquiries when you're already with a client? Do clients WhatsApp you, and if so — does it get overwhelming?
-
-Most solo cleaners I speak to say WhatsApp is their #1 channel for getting bookings, but it's also where they lose leads because they can't reply fast enough.
-
-We built a tool for that — it keeps your WhatsApp organized even when you can't check it.
-
-Interested in seeing how it works? Reply YES for a free 10-minute walkthrough on WhatsApp.
-
-Or just reply with any questions — happy to help either way.
-
-{{ sender_name }}
-Client Compass
-""",
-    "default": """
-Hi {{ owner_name or 'there' }},
-
-I came across {{ business_name }} and wanted to reach out.
-
-Do you use WhatsApp for communicating with clients or taking bookings? If so, how do you manage it when you're busy?
-
-We built a simple tool that helps businesses like yours keep WhatsApp organized — so you never miss a enquiry even when you're hands-full.
-
-Reply YES if you'd like to see a quick demo on WhatsApp.
-
-{{ sender_name }}
-Client Compass
-""",
-}
-
-HTML_TEMPLATES = {
-    "hair_beauty": """
-<!DOCTYPE html>
-<html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px;">
-<p>Hi {{ owner_name or 'there' }},</p>
-<p>Saw <strong>{{ business_name }}</strong> on Yep Mall — looks like you're doing great work.</p>
-<p>Quick question: do clients book or message you through WhatsApp? If so, how are you managing it when you're with a client?</p>
-<p>Most hair and beauty salons I talk to say WhatsApp is their busiest channel — but also the hardest to keep up with.</p>
-<p>We built a tool specifically for that. I can show you how in 10 minutes if you're curious.</p>
-<p><a href="https://clientcompass.co.za" style="background:#3b82f6;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;">Reply YES for a free WhatsApp demo</a></p>
-<p>Or just reply with any questions — happy to help.</p>
-<p>Talk soon,<br>{{ sender_name }}<br>Client Compass<br><a href="https://clientcompass.co.za">clientcompass.co.za</a></p>
-<hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
-<p style="font-size:12px;color:#888;">You're receiving this because you run a business in South Africa and we think Client Compass could help. 
-<a href="{{ unsubscribe_url }}">Unsubscribe</a> — we respect your time.</p>
-</body></html>
-""",
-    "cleaning": """
-<!DOCTYPE html>
-<html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px;">
-<p>Hi {{ owner_name or 'there' }},</p>
-<p>Found <strong>{{ business_name }}</strong> on Yep Mall — great to see you offering cleaning services.</p>
-<p>Quick question: how do you handle enquiries when you're already with a client? Do clients WhatsApp you, and if so — does it get overwhelming?</p>
-<p>Most solo cleaners I speak to say WhatsApp is their #1 channel for getting bookings, but it's also where they lose leads.</p>
-<p>We built a tool for that. Interested in seeing how it works?</p>
-<p><a href="https://clientcompass.co.za" style="background:#3b82f6;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;">Reply YES for a free WhatsApp demo</a></p>
-<p>{{ sender_name }}<br>Client Compass<br><a href="https://clientcompass.co.za">clientcompass.co.za</a></p>
-<hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
-<p style="font-size:12px;color:#888;">You're receiving this because you run a business in South Africa. 
-<a href="{{ unsubscribe_url }}">Unsubscribe</a> — we respect your time.</p>
-</body></html>
-""",
-    "default": """
-<!DOCTYPE html>
-<html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px;">
-<p>Hi {{ owner_name or 'there' }},</p>
-<p>I came across <strong>{{ business_name }}</strong> and wanted to reach out.</p>
-<p>Do you use WhatsApp for communicating with clients or taking bookings? If so, how do you manage it when you're busy?</p>
-<p>We built a simple tool that helps businesses keep WhatsApp organized.</p>
-<p><a href="https://clientcompass.co.za" style="background:#3b82f6;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;">Reply YES for a free demo</a></p>
-<p>{{ sender_name }}<br>Client Compass<br><a href="https://clientcompass.co.za">clientcompass.co.za</a></p>
-<hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
-<p style="font-size:12px;color:#888;"><a href="{{ unsubscribe_url }}">Unsubscribe</a></p>
-</body></html>
-""",
-}
-
-SENDER_NAME = "Mario from Client Compass"
-
-def _get_template(lead: Lead) -> tuple[str, str, str]:
-    """Pick the right template for a lead based on category."""
-    category = (lead.business_type or "").lower()
-    if any(k in category for k in ["hair", "beauty", "nail", "barber", "salon"]):
-        key = "hair_beauty"
-    elif any(k in category for k in ["clean", "maid"]):
-        key = "cleaning"
-    else:
-        key = "default"
-    return EMAIL_TEMPLATES[key], HTML_TEMPLATES[key], key
-
-
-def _render_email(lead: Lead, template_key: str, unsubscribe_url: str) -> tuple[str, str, str]:
-    """Render subject, text, and HTML for a lead."""
-    ctx = {
-        "business_name": lead.business_name,
-        "owner_name": lead.owner_name or "",
-        "sender_name": SENDER_NAME,
-        "unsubscribe_url": unsubscribe_url,
-    }
-    text = Template(EMAIL_TEMPLATES[template_key]).render(**ctx)
-    html = Template(HTML_TEMPLATES[template_key]).render(**ctx)
-    subject = f"Quick question about {lead.business_name}"
-    return subject, text, html
+    return _build_email(from_email, to_email, subject, html_body, text_body, in_reply_to)
 
 
 # ── Outreach Worker ────────────────────────────────────────────────────────────
@@ -201,17 +160,25 @@ def _render_email(lead: Lead, template_key: str, unsubscribe_url: str) -> tuple[
 def send_email_sequence(self, batch_size: int = 10) -> dict:
     """
     Pick up outreach_queued leads, create email sequences, and send first touch.
-    
+
     Rate limiting:
     - Max EMAIL_DAILY_LIMIT emails per day
     - Min EMAIL_MIN_GAP_HOURS between touches to same lead
     - At most batch_size emails per Celery run
+
+    Safety gates (send_mode = 'test' defaults on):
+    - SQL query filter: only whitelisted emails selected from DB
+    - SMTP-level defence in depth: any non-whitelisted email skipped at send time
+    Flip to live by setting SEND_MODE=live in .env
     """
     daily_limit = settings.email_daily_limit or 5
     min_gap_hours = settings.email_min_gap_hours or 72
+    send_mode = settings.send_mode or "test"
+    whitelist = {e.lower() for e in settings.test_email_whitelist}
+
+    log.info("outreach_run_started", send_mode=send_mode)
 
     with sync_session_scope() as session:
-        # Check today's sends
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         sent_today = session.execute(
             select(func.count(OutreachSequence.id)).where(
@@ -227,28 +194,33 @@ def send_email_sequence(self, batch_size: int = 10) -> dict:
             log.info("outreach_daily_cap_reached", sent_today=sent_today, limit=daily_limit)
             return {"status": "ok", "sent": 0, "reason": "daily_cap_reached"}
 
-        # Get leads ready for outreach
         min_gap = datetime.now(timezone.utc) - timedelta(hours=min_gap_hours)
-        leads = session.execute(
+        query = (
             select(Lead).where(
                 Lead.status == "outreach_queued",
+                Lead.mockup_status.in_(["none", "rejected", "failed"]),  # skip approved + pending_approval (draft flow handles those)
                 Lead.email.isnot(None),
-                # Not contacted in last min_gap_hours
                 (Lead.last_contacted_at.is_(None)) | (Lead.last_contacted_at < min_gap),
-                # Not already in active sequence
                 ~Lead.id.in_(
                     select(OutreachSequence.lead_id).where(
                         OutreachSequence.status.in_(["pending", "sent"]),
                     )
                 ),
-            ).limit(to_send)
-        ).scalars().all()
+            )
+        )
+
+        if send_mode == "test":
+            # SQL-level gate: only whitelisted test addresses
+            query = query.where(Lead.email.in_(settings.test_email_whitelist))
+            log.info("outreach_test_mode_active", whitelist=settings.test_email_whitelist)
+
+        leads = session.execute(query.limit(to_send)).scalars().all()
 
     if not leads:
-        log.info("outreach_no_leads_ready")
+        log.info("outreach_no_leads_ready", send_mode=send_mode)
         return {"status": "ok", "sent": 0, "reason": "no_leads_ready"}
 
-    log.info("outreach_sending_batch", count=len(leads))
+    log.info("outreach_sending_batch", count=len(leads), send_mode=send_mode)
     sent = failed = 0
 
     try:
@@ -261,22 +233,28 @@ def send_email_sequence(self, batch_size: int = 10) -> dict:
         if not lead.email:
             continue
 
-        try:
-            template_key = _get_template(lead)[2]
-            unsub_url = f"https://cc-leadgen.clientcompass.co.za/unsubscribe?token={lead.id}"
-            subject, text_body, html_body = _render_email(lead, template_key, unsub_url)
+        # SMTP-level defence in depth
+        if send_mode == "test" and lead.email.lower() not in whitelist:
+            log.warning("smtp_test_mode_blocked", email=lead.email, lead_id=str(lead.id))
+            continue
 
-            msg = _build_email(
+        try:
+            content = render_email_for_lead(lead)
+            subject, text_body, html_body = content.subject, content.body_text, content.body_html
+            template_key = content.template_key
+
+            msg = _build_email_with_pdf(
                 from_email=settings.smtp_from_email,
                 to_email=lead.email,
                 subject=subject,
                 html_body=html_body,
                 text_body=text_body,
+                pdf_path=getattr(lead, "web_audit_pdf_path", None),
+                lead=lead,  # Session 15 fix — enables on-demand PDF regen
             )
 
             smtp.sendmail(settings.smtp_from_email, [lead.email], msg.as_string())
 
-            # Record sequence
             with sync_session_scope() as session:
                 lead_db = session.get(Lead, lead.id)
                 if lead_db:
@@ -295,18 +273,16 @@ def send_email_sequence(self, batch_size: int = 10) -> dict:
                     lead_db.status = "contacted"
                     session.add(seq)
                     session.add(lead_db)
-
-                    # Event log
                     event = LeadEvent(
                         lead_id=lead.id,
                         event_type="email_sent",
-                        payload={"subject": subject, "step": 1, "template": template_key},
+                        payload={"subject": subject, "step": 1, "template": template_key, "pdf_attached": bool(getattr(lead, "web_audit_pdf_path", None))},
                     )
                     session.add(event)
 
             sent += 1
-            log.info("outreach_email_sent", lead_id=str(lead.id), email=lead.email)
-            time.sleep(2)  # Space out sends
+            log.info("outreach_email_sent", lead_id=str(lead.id), email=lead.email, send_mode=send_mode)
+            time.sleep(2)
 
         except Exception as e:
             log.error("outreach_send_failed", lead_id=str(lead.id), error=str(e))
@@ -318,7 +294,7 @@ def send_email_sequence(self, batch_size: int = 10) -> dict:
     except Exception:
         pass
 
-    log.info("outreach_batch_done", sent=sent, failed=failed)
+    log.info("outreach_batch_done", sent=sent, failed=failed, send_mode=send_mode)
     return {"status": "ok", "sent": sent, "failed": failed}
 
 
@@ -326,23 +302,21 @@ def send_email_sequence(self, batch_size: int = 10) -> dict:
 def check_replies(self) -> dict:
     """
     Poll outreach inbox for replies (Phase 4 response handling).
-    
+
     Matches In-Reply-To / References headers to our sent Message-IDs.
     On reply: update sequence + lead status, alert via Discord, cancel remaining sequence.
     """
     imap_host = getattr(settings, "imap_host", "imap.zoho.com")
     imap_user = getattr(settings, "imap_user", settings.smtp_user)
     imap_pass = getattr(settings, "imap_pass", settings.smtp_pass)
-    inbox = "INBOX"
 
     replies_found = 0
 
     try:
         mail = imaplib.IMAP4_SSL(imap_host)
         mail.login(imap_user, imap_pass)
-        mail.select(inbox)
+        mail.select("INBOX")
 
-        # Search for recent unread emails (new replies)
         status, msg_ids = mail.search(None, "UNSEEN")
         if status != "OK":
             return {"status": "error", "reason": "imap_search_failed"}
@@ -352,26 +326,19 @@ def check_replies(self) -> dict:
                 status, msg_data = mail.fetch(msg_id, "(RFC822)")
                 if status != "OK":
                     continue
-
-                raw_email = msg_data[0][1]
-                # Parse headers — in real impl use email.message_from_bytes
-                # For now, just mark as read (will implement full parsing next)
                 mail.store(msg_id, "+FLAGS", "\\Seen")
                 replies_found += 1
-
             except Exception as e:
                 log.warning("reply_parse_error", msg_id=msg_id.decode(), error=str(e))
                 continue
 
         mail.logout()
-
     except Exception as e:
         log.error("imap_connection_failed", error=str(e))
         return {"status": "error", "error": str(e)}
 
     if replies_found > 0:
         log.info("replies_detected", count=replies_found)
-        # TODO: Discord alert on reply
 
     return {"status": "ok", "replies_found": replies_found}
 
@@ -388,6 +355,7 @@ def queue_leads_for_outreach(self, min_score: int = 40) -> dict:
                 Lead.status == "enriched",
                 Lead.score >= min_score,
                 Lead.email.isnot(None),
+                Lead.mockup_status.in_(["none", "rejected", "failed"]),  # mockup-approved leads use draft flow
             )
         ).scalars().all()
 
