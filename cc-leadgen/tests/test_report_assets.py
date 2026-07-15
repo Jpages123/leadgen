@@ -148,6 +148,31 @@ def test_regenerate_returns_existing_durable_pdf_without_regen(fake_cache):
     assert mock_gen.call_count == 0
 
 
+def test_regenerate_force_bypasses_cache(fake_cache):
+    """With ``force=True``, ``regenerate_pdf_for_lead`` regenerates even if a
+    PDF already exists at the durable location. Used by
+    ``email_draft.send_email_draft`` to guarantee PDF/email consistency when
+    sibling leads share a slug (Limelight has two lead rows that both
+    slug to ``limelight-event-hire``)."""
+    class FakeLead:
+        business_name = "test-force"
+        website = "https://force.example.com"
+        id = "abc"
+    durable = fake_cache["durable"] / "test-force.pdf"
+    durable.write_bytes(b"%PDF-1.4 stale cached content")
+
+    def fake_generate_pdf(*args, **kwargs):
+        durable.write_bytes(b"%PDF-1.4 fresh content")
+        return str(durable)
+
+    with patch("app.reports.web_audit_report.generate_pdf",
+               side_effect=fake_generate_pdf) as mock_gen:
+        result = report_assets.regenerate_pdf_for_lead(FakeLead(), force=True)
+    assert mock_gen.call_count == 1
+    assert result == str(durable)
+    assert durable.read_bytes() == b"%PDF-1.4 fresh content"
+
+
 def test_regenerate_returns_none_when_generate_pdf_fails(fake_cache):
     """If ``generate_pdf`` raises, ``regenerate_pdf_for_lead`` catches and
     returns None (doesn't propagate the exception to the email sender)."""

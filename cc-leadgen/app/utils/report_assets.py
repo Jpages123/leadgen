@@ -109,7 +109,7 @@ def resolve(slug: str) -> "Path | None":
     return None
 
 
-def regenerate_pdf_for_lead(lead) -> "str | None":
+def regenerate_pdf_for_lead(lead, force: bool = False) -> "str | None":
     """Regenerate the web audit PDF for a lead whose file is missing.
 
     Used by the email senders (``email_draft.send_email_draft`` and
@@ -122,6 +122,13 @@ def regenerate_pdf_for_lead(lead) -> "str | None":
               least ``business_name`` and ``website`` set. Optional fields
               (``pagespeed_*``, ``site_copyright_year``, ``website_platform``,
               ``mockup_url``, etc.) are pulled from the lead if present.
+        force: When True, always regenerate even if a non-empty PDF
+               already exists at the durable location. Default False
+               (fast-path: return existing file). ``send_email_draft``
+               passes True to guarantee the attached PDF matches the
+               current leadgen data shown in the email body — critical
+               when sibling leads share a slug (Limelight has two lead
+               rows that both slug to "limelight-event-hire").
 
     Returns:
         Absolute path to the newly-written PDF, or ``None`` if regeneration
@@ -142,7 +149,7 @@ def regenerate_pdf_for_lead(lead) -> "str | None":
 
     slug = _slug_from_name(business_name)
     dest = report_path(slug)
-    if dest.exists() and dest.stat().st_size > 0:
+    if not force and dest.exists() and dest.stat().st_size > 0:
         # Already exists in durable location — return as-is.
         return str(dest)
 

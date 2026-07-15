@@ -155,6 +155,9 @@ def generate_email_draft(self, approval_id: str) -> dict:
             "business_type": lead.business_type,
             "website_platform": lead.website_platform,
             "pagespeed_mobile": lead.pagespeed_mobile,
+            "pagespeed_seo": getattr(lead, "pagespeed_seo", None),
+            "pagespeed_a11y": getattr(lead, "pagespeed_a11y", None),
+            "site_copyright_year": getattr(lead, "site_copyright_year", None),
             "web_pitch_score": lead.web_pitch_score,
             "web_audit_pdf_path": lead.web_audit_pdf_path,
             "mockup_url": lead.mockup_url,
@@ -363,23 +366,34 @@ def send_email_draft(self, draft_id: str) -> dict:
             pdf_path_raw = None
 
     resolved_pdf: "_Path | None" = None
-    if pdf_path_raw:
-        try:
-            from app.utils.report_assets import resolve as _resolve_report
-            stem = _Path(pdf_path_raw).stem  # e.g. "limelight-event-hire"
-            resolved_pdf = _resolve_report(stem)
-        except Exception as exc:
-            log.warning("draft_pdf_resolve_failed", path=pdf_path_raw, error=str(exc))
-
-    if resolved_pdf is None and lead is not None:
+    if lead is not None:
+        # Always regenerate the PDF from current lead data so the attached
+        # report reflects the same numbers shown in the email body. The
+        # resolver+cache path (used by the auto-sender ``outreach.py``)
+        # can serve stale data when a slug is shared across sibling leads
+        # (Limelight has two lead rows, both slug to "limelight-event-hire").
+        # Cost: ~2-3s per send. Worth it for operator-reviewed drafts where
+        # PDF/email consistency matters.
         try:
             from app.utils.report_assets import regenerate_pdf_for_lead
-            regenerated = regenerate_pdf_for_lead(lead)
+            regenerated = regenerate_pdf_for_lead(lead, force=True)
             if regenerated:
                 resolved_pdf = _Path(regenerated)
                 log.info("draft_pdf_regen_inline", path=regenerated)
         except Exception as exc:
             log.warning("draft_pdf_regen_failed", error=str(exc))
+
+    if resolved_pdf is None and pdf_path_raw:
+        # Fallback to resolver if regen failed or no lead available — best
+        # effort, may attach a stale PDF.
+        try:
+            from app.utils.report_assets import resolve as _resolve_report
+            stem = _Path(pdf_path_raw).stem  # e.g. "limelight-event-hire"
+            resolved_pdf = _resolve_report(stem)
+            if resolved_pdf:
+                log.info("draft_pdf_resolver_fallback", path=str(resolved_pdf))
+        except Exception as exc:
+            log.warning("draft_pdf_resolve_failed", path=pdf_path_raw, error=str(exc))
 
     if resolved_pdf and resolved_pdf.exists() and resolved_pdf.stat().st_size > 0:
         try:
@@ -434,7 +448,7 @@ def send_email_draft(self, draft_id: str) -> dict:
                     "step": 1,
                     "template": template_key,
                     "draft_id": draft_id,
-                    "pdf_attached": bool(pdf_path),
+                    "pdf_attached": bool(resolved_pdf),
                     "via_draft": True,
                 },
             )

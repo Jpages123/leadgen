@@ -106,27 +106,59 @@ def test_site_age_omitted_when_copyright_unknown():
 
 # ─── Smart third row ─────────────────────────────────────────────────────────
 
-def test_seo_row_chosen_when_seo_below_threshold():
-    """SEO < 85 wins over a11y and platform — Google ranking is concrete."""
+def test_seo_row_red_risk_when_seo_below_70():
+    """SEO < 70 → red 'Google ranking risk' (truly alarming)."""
     lead = FakeLead(
         pagespeed_mobile=70,
         site_copyright_year=2022,
-        pagespeed_seo=72,        # bad
-        pagespeed_a11y=52,       # also bad
+        pagespeed_seo=55,        # very bad
+        pagespeed_a11y=52,
         website_platform="wordpress_divi",
     )
     rows = _rows(lead)
     [third] = [r for r in rows if r[0] != "Mobile performance" and r[0] != "Site age"]
     assert third[0] == "Google ranking risk"
-    assert "SEO 72 / 100" in third[1]
+    assert "SEO 55 / 100" in third[1]
 
 
-def test_platform_chosen_when_seo_okay_but_a11y_catastrophic():
-    """SEO is fine but a11y is catastrophic (< 50) — show accessibility."""
+def test_seo_row_amber_visible_when_70_to_94():
+    """SEO 70-94 → amber 'SEO score' (visible but not alarming)."""
     lead = FakeLead(
         pagespeed_mobile=70,
         site_copyright_year=2022,
-        pagespeed_seo=92,        # ok
+        pagespeed_seo=83,        # the Limelight case
+        pagespeed_a11y=52,
+        website_platform="static_html",
+    )
+    rows = _rows(lead)
+    [third] = [r for r in rows if r[0] != "Mobile performance" and r[0] != "Site age"]
+    assert third[0] == "SEO score"
+    assert third[1] == "83 / 100"
+
+
+def test_seo_row_omitted_when_seo_acceptable():
+    """SEO ≥ 95 → omit (acceptable, not worth a row)."""
+    lead = FakeLead(
+        pagespeed_mobile=70,
+        site_copyright_year=2022,
+        pagespeed_seo=96,
+        pagespeed_a11y=88,
+        website_platform="wix",
+    )
+    rows = _rows(lead)
+    labels = [r[0] for r in rows]
+    assert "Google ranking risk" not in labels
+    assert "SEO score" not in labels
+    # Falls through to platform
+    assert "Built with" in labels
+
+
+def test_platform_chosen_when_seo_okay_but_a11y_catastrophic():
+    """SEO ≥ 95 → omit, a11y catastrophic → show accessibility."""
+    lead = FakeLead(
+        pagespeed_mobile=70,
+        site_copyright_year=2022,
+        pagespeed_seo=96,        # acceptable
         pagespeed_a11y=42,       # catastrophic
         website_platform="wordpress_divi",
     )
@@ -137,11 +169,11 @@ def test_platform_chosen_when_seo_okay_but_a11y_catastrophic():
 
 
 def test_platform_chosen_when_both_seo_and_a11y_okay():
-    """If SEO ≥ 85 AND a11y ≥ 50, fall back to platform — universally legible."""
+    """If SEO ≥ 95 AND a11y ≥ 50, fall back to platform — universally legible."""
     lead = FakeLead(
         pagespeed_mobile=70,
         site_copyright_year=2022,
-        pagespeed_seo=92,
+        pagespeed_seo=96,
         pagespeed_a11y=88,
         website_platform="wix",
     )
@@ -156,7 +188,7 @@ def test_a11y_in_50_to_60_range_does_not_win():
     lead = FakeLead(
         pagespeed_mobile=70,
         site_copyright_year=2022,
-        pagespeed_seo=92,
+        pagespeed_seo=96,
         pagespeed_a11y=55,       # in the 50-60 range — should NOT win
         website_platform="wix",
     )
@@ -166,7 +198,12 @@ def test_a11y_in_50_to_60_range_does_not_win():
 
 
 def test_limelight_specific():
-    """The exact Limelight profile: mobile 41, copyright 2017, SEO 83, a11y 52."""
+    """The exact Limelight profile: mobile 41, copyright 2017, SEO 83, a11y 52.
+
+    After Session 21 threshold retune (2026-07-15):
+    - SEO 83 → amber 'SEO score', not red 'risk'.
+    - Three rows visible: Mobile (red), Site age (slate), SEO score (amber).
+    """
     current_year = datetime.now().year
     expected_age = current_year - 2017
     lead = FakeLead(
@@ -180,7 +217,7 @@ def test_limelight_specific():
     assert rows == [
         ("Mobile performance",   "41 / 100"),
         ("Site age",             f"{expected_age} years old"),
-        ("Google ranking risk",  "SEO 83 / 100"),
+        ("SEO score",            "83 / 100"),
     ]
 
 
@@ -192,7 +229,7 @@ def test_pick_stat_rows_text_format():
     text = email_metrics.pick_stat_rows_text(lead)
     assert text[0] == "- Mobile performance: 41 / 100"
     assert any("Site age:" in line for line in text)
-    assert any("Google ranking risk:" in line for line in text)
+    assert any("SEO score:" in line for line in text)
 
 
 # ─── Platform display mapping ────────────────────────────────────────────────

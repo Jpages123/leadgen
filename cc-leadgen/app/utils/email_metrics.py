@@ -42,7 +42,8 @@ from typing import Any
 # ── Thresholds (mirrors the ones in web_audit_report.py / Phase B spec) ──────
 MOBILE_GOOD_THRESHOLD = 90
 SEO_GOOD_THRESHOLD = 95
-SEO_WARN_THRESHOLD = 85  # sub-85 = real Google ranking risk
+SEO_RISK_THRESHOLD = 70  # below 70% of Google's threshold = real ranking risk
+SEO_SHOW_THRESHOLD = 95  # 95+ is acceptable; no point surfacing it
 A11Y_CATASTROPHIC = 50  # only flag when truly broken; not a familiar metric
 
 
@@ -67,7 +68,7 @@ def _mobile_color(score: int | None) -> str:
 def _seo_color(score: int | None) -> str:
     if score is None:
         return COLOR_SLATE_500
-    if score < SEO_WARN_THRESHOLD:
+    if score < SEO_RISK_THRESHOLD:
         return COLOR_RED
     if score < SEO_GOOD_THRESHOLD:
         return COLOR_AMBER
@@ -158,16 +159,26 @@ def pick_stat_rows(lead: Any) -> list[dict]:
         })
 
     # Row 3 — smart third. SEO wins (Google ranking is concrete and
-    # universally understood). A11y only flagged when catastrophic
-    # (< 50) — most SME owners don't know what the metric means.
+    # universally understood). Three colour tiers:
+    #   < 70  → red "Google ranking risk" (truly bad)
+    #   70-94 → amber "SEO score"        (worth flagging, not alarming)
+    #   ≥ 95  → omit (acceptable, not worth a row)
+    # A11y only flagged when catastrophic (< 50).
     # Platform is the universal fallback — boring but always legible.
     seo = getattr(lead, "pagespeed_seo", None)
     a11y = getattr(lead, "pagespeed_a11y", None)
 
-    if seo is not None and seo < SEO_WARN_THRESHOLD:
+    if seo is not None and seo < SEO_RISK_THRESHOLD:
         rows.append({
             "label":  "Google ranking risk",
             "value":  f"SEO {seo} / 100",
+            "color":  _seo_color(seo),
+            "weight": "bold",
+        })
+    elif seo is not None and seo < SEO_SHOW_THRESHOLD:
+        rows.append({
+            "label":  "SEO score",
+            "value":  f"{seo} / 100",
             "color":  _seo_color(seo),
             "weight": "bold",
         })
