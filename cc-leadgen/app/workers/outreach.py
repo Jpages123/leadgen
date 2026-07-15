@@ -31,6 +31,18 @@ from app.models import Lead, LeadEvent, OutreachSequence, OutreachTemplate
 from app.utils.logger import get_logger
 from app.utils.email_builder import render_email_for_lead
 
+
+def _slugify_for_attachment(name: str) -> str:
+    """Business name → attachment-safe slug.
+
+    Strips non-alphanumeric chars, collapses runs, keeps Title Case.
+    Used purely for the MIME attachment filename; the file on disk
+    keeps its original <slug>.pdf name in <project>/.cache/reports/.
+    """
+    import re as _re
+    s = _re.sub(r"[^A-Za-z0-9]+", "-", (name or "")).strip("-")
+    return s[:80] or "lead"
+
 log = get_logger(__name__)
 settings = get_settings()
 
@@ -137,9 +149,12 @@ def _build_email_with_pdf(
             import os
             with open(resolved_pdf, "rb") as f:
                 pdf_data = f.read()
-            filename = os.path.basename(resolved_pdf).replace("-", "_")
+            _display_name = getattr(lead, "business_name", None) if lead is not None else None
+            if not _display_name:
+                _display_name = os.path.basename(resolved_pdf).replace(".pdf", "").replace("_", " ").replace("-", " ").title()
+            _attachment = "Your-Website-Audit-" + _slugify_for_attachment(_display_name) + ".pdf"
             pdf_part = MIMEApplication(pdf_data, _subtype="pdf")
-            pdf_part.add_header("Content-Disposition", "attachment", filename=f"web_audit_{filename}")
+            pdf_part.add_header("Content-Disposition", "attachment", filename=_attachment)
             outer.attach(pdf_part)
         except Exception as exc:
             log.warning("pdf_attach_failed", path=str(resolved_pdf), error=str(exc))

@@ -131,6 +131,9 @@ def render_modern_web_revamp(
         f"before your page finishes loading — which directly costs you quote requests.\n\n"
         f"I built a quick mockup of what your new site could look like:\n"
         f"{mockup_url}\n\n"
+        f"I've also attached the full audit report as a PDF (1 page) so you can "
+        f"share it with a partner or refer back to it later — it includes "
+        f"screenshots showing exactly what's wrong with the current site.\n\n"
         f"No pressure — if you're happy with your current site, just ignore this.\n\n"
         f"— JJ Jacobs\n"
         f"Client Compass\n"
@@ -138,7 +141,7 @@ def render_modern_web_revamp(
     )
 
     # ── Subject ──────────────────────────────────────────────────────────
-    subject = f"Your website audit for {business_name} — preview inside"
+    subject = f"Your website audit for {business_name} — preview + PDF inside"
 
     # ── Mobile score color ───────────────────────────────────────────────
     mobile_color = _mobile_score_color(mobile_score)
@@ -216,7 +219,7 @@ def render_modern_web_revamp(
 
 <!-- Preheader text (hidden, shows in inbox preview) -->
 <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:{BRAND_BG};">
-  Mobile {preheader_value} · Free preview of your new website inside.
+  Mobile {preheader_value} · Free preview of your new website inside &mdash; full audit PDF attached for your records.
 </div>
 
 <!-- EMAIL CONTAINER -->
@@ -310,6 +313,9 @@ def render_modern_web_revamp(
       <p style="margin:8px 0 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:12px;color:{BRAND_TEXT_LIGHT};text-align:center;">
         Can't see the preview?
         <a href="{mockup_url}" target="_blank" style="color:{BRAND_PRIMARY};text-decoration:underline;">View the live version →</a>
+      </p>
+      <p style="margin:12px 0 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;line-height:1.6;color:{BRAND_TEXT_MUTED};text-align:center;">
+        <strong style="color:{BRAND_TEXT};">📎 Full audit PDF attached</strong> &mdash; I&rsquo;ve attached a 1-page report you can share with a partner or refer back to later.
       </p>
     </td>
   </tr>

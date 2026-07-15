@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page {
+    size: A4;
+    margin: 0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1a1a2e; background: #fff; font-size: 13px; }
+
+  /* Cover header */
+  .cover {
+    background: linear-gradient(135deg, #1a4d5c 0%, #0d2f38 100%);
+    color: white;
+    padding: 48px 48px 36px;
+  }
+  .cover .brand { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.7; margin-bottom: 8px; }
+  .cover h1 { font-size: 28px; font-weight: 700; line-height: 1.2; margin-bottom: 6px; }
+  .cover .subtitle { font-size: 14px; opacity: 0.85; margin-bottom: 28px; }
+  .cover .meta { font-size: 11px; opacity: 0.6; }
+
+  /* Score banner */
+  .score-banner {
+    background: #f8f9fa;
+    border-bottom: 3px solid #1a4d5c;
+    padding: 24px 48px;
+    display: flex;
+    align-items: center;
+    gap: 32px;
+  }
+  .score-circle {
+    width: 80px; height: 80px;
+    border-radius: 50%;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    flex-shrink: 0;
+    font-weight: 700;
+  }
+  .score-circle.high   { background: #dc3545; color: white; }
+  .score-circle.medium { background: #fd7e14; color: white; }
+  .score-circle.low    { background: #6c757d; color: white; }
+  .score-circle .num { font-size: 26px; line-height: 1; }
+  .score-circle .label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; }
+  .score-summary h2 { font-size: 17px; margin-bottom: 4px; }
+  .score-summary p { font-size: 12px; color: #555; line-height: 1.5; }
+
+  /* Body content */
+  .content { padding: 32px 48px; }
+  .section { margin-bottom: 28px; }
+  .section-title {
+    font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
+    text-transform: uppercase; color: #1a4d5c;
+    border-bottom: 2px solid #1a4d5c; padding-bottom: 6px;
+    margin-bottom: 14px;
+  }
+
+  /* Grid */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+  /* Metric cards */
+  .card {
+    background: #f8f9fa; border-radius: 8px;
+    padding: 14px 16px; border-left: 4px solid #dee2e6;
+  }
+  .card.bad    { border-left-color: #dc3545; background: #fff5f5; }
+  .card.warn   { border-left-color: #fd7e14; background: #fff8f0; }
+  .card.ok     { border-left-color: #28a745; background: #f0fff4; }
+  .card .card-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #888; margin-bottom: 4px; }
+  .card .card-value { font-size: 22px; font-weight: 700; color: #1a1a2e; }
+  .card .card-sub   { font-size: 11px; color: #666; margin-top: 2px; }
+
+  /* Platform badge */
+  .platform-badge {
+    display: inline-block; padding: 4px 12px;
+    border-radius: 20px; font-size: 12px; font-weight: 600;
+    background: #e9ecef; color: #495057;
+  }
+
+  /* Issues list */
+  .issue-list { list-style: none; }
+  .issue-list li {
+    padding: 8px 12px; border-radius: 6px;
+    margin-bottom: 6px; font-size: 12px; line-height: 1.5;
+    background: #fff5f5; border-left: 3px solid #dc3545; color: #721c24;
+  }
+  .issue-list li.warn { background: #fff8f0; border-left-color: #fd7e14; color: #7d4e00; }
+
+  /* Screenshot */
+  .screenshot-wrap {
+    border: 1px solid #dee2e6; border-radius: 8px; overflow: hidden;
+    max-height: 220px; width: 100%;
+  }
+  .screenshot-wrap img { width: 100%; display: block; object-fit: cover; object-position: top; }
+  .screenshot-placeholder {
+    height: 120px; background: #f0f2f5;
+    display: flex; align-items: center; justify-content: center;
+    color: #aaa; font-size: 12px;
+  }
+
+  /* CTA footer */
+  .cta-footer {
+    background: #1a4d5c; color: white;
+    padding: 24px 48px; margin-top: 8px;
+  }
+  .cta-footer h3 { font-size: 16px; margin-bottom: 6px; }
+  .cta-footer p  { font-size: 12px; opacity: 0.85; line-height: 1.6; }
+  .cta-footer .contact { margin-top: 12px; font-size: 12px; opacity: 0.7; }
+
+  /* Helpers */
+  .text-muted { color: #888; font-size: 11px; }
+  .mt-4 { margin-top: 16px; }
+  .url-text { font-size: 11px; color: #1a4d5c; word-break: break-all; }
+</style>
+</head>
+<body>
+
+<!-- Cover -->
+<div class="cover">
+  <div class="brand">Client Compass &mdash; Web Audit Report</div>
+  <h1>{{ business_name }}</h1>
+  <div class="subtitle">{{ website_display }}</div>
+  <div class="meta">Report generated {{ generated_date }} &bull; Feel free to forward</div>
+</div>
+
+<!-- Pitch score banner -->
+<div class="score-banner">
+  <div class="score-circle {{ score_class }}">
+    <span class="num">{{ web_pitch_score }}</span>
+    <span class="label">/100</span>
+  </div>
+  <div class="score-summary">
+    <h2>{{ score_headline }}</h2>
+    <p>{{ score_description }}</p>
+  </div>
+</div>
+
+<div class="content">
+
+  {% if copyright_year %}
+<!-- Prominent copyright-age banner — the "9 years without a redesign" card
+     is the single strongest piece of social proof in the report. Foreground
+     it under the score so the recipient cannot miss it. -->
+<div class="age-banner">
+  <div class="age-banner-num">{{ copyright_age }} years</div>
+  <div class="age-banner-text">
+    <strong>This website hasn&rsquo;t been redesigned in {{ copyright_age }} years.</strong>
+    <span class="age-banner-sub">The footer still says &copy; {{ copyright_year }}. Most of your competitors have redesigned at least twice since then.</span>
+  </div>
+</div>
+{% endif %}
+
+<!-- Platform + screenshot side-by-side -->
+
+  <div class="section grid-2">
+    <div>
+      <div class="section-title">Platform Detected</div>
+      <div class="mt-4">
+        <span class="platform-badge">{{ platform_display }}</span>
+        {% if platform_note %}
+        <p class="text-muted mt-4">{{ platform_note }}</p>
+        {% endif %}
+      </div>
+      {% if copyright_year %}
+      <div class="mt-4">
+        <div class="card warn">
+          <div class="card-label">Last Updated (Copyright)</div>
+          <div class="card-value">&copy; {{ copyright_year }}</div>
+          <div class="card-sub">{{ copyright_age }} years without a redesign</div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+    <div>
+      <div class="section-title">Current Website</div>
+      <div class="screenshot-wrap mt-4">
+        {% if screenshot_path %}
+        <img src="file://{{ screenshot_path }}" alt="Website screenshot">
+        {% else %}
+        <div class="screenshot-placeholder">Screenshot unavailable</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- PageSpeed scores -->
+  <div class="section">
+    <div class="section-title">Google PageSpeed Scores</div>
+    <div class="grid-3">
+      <div class="card {{ mobile_class }}">
+        <div class="card-label">Mobile Performance</div>
+        <div class="card-value">{{ pagespeed_mobile if pagespeed_mobile is not none else 'N/A' }}</div>
+        <div class="card-sub">{{ mobile_verdict }}</div>
+      </div>
+      <div class="card {{ desktop_class }}">
+        <div class="card-label">Desktop Performance</div>
+        <div class="card-value">{{ pagespeed_desktop if pagespeed_desktop is not none else 'N/A' }}</div>
+        <div class="card-sub">{{ desktop_verdict }}</div>
+      </div>
+      <div class="card {{ seo_class }}">
+        <div class="card-label">SEO Score</div>
+        <div class="card-value">{{ pagespeed_seo if pagespeed_seo is not none else 'N/A' }}</div>
+        <div class="card-sub">{{ seo_verdict }}</div>
+      </div>
+    </div>
+    <p class="text-muted mt-4">Scores are out of 100. Below 50 = poor. 50&ndash;89 = needs improvement. 90+ = good. Source: Google Lighthouse via PageSpeed Insights.</p>
+  </div>
+
+  <!-- Issues found -->
+  {% if issues %}
+  <div class="section">
+    <div class="section-title">Issues Found</div>
+    <ul class="issue-list">
+      {% for issue in issues %}
+      <li class="{{ issue.severity }}">{{ issue.text }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <!-- Business info -->
+  <div class="section">
+    <div class="section-title">Business Details</div>
+    <div class="grid-2">
+      <div>
+        {% if city %}<p><strong>Location:</strong> {{ city }}{% if province %}, {{ province }}{% endif %}</p>{% endif %}
+        {% if phone %}<p class="mt-4"><strong>Phone:</strong> {{ phone }}</p>{% endif %}
+        {% if email %}<p class="mt-4"><strong>Email:</strong> {{ email }}</p>{% endif %}
+      </div>
+      <div>
+        {% if google_rating %}<p><strong>Google Rating:</strong> {{ google_rating }} &#9733; ({{ google_review_count }} reviews)</p>{% endif %}
+        {% if business_type %}<p class="mt-4"><strong>Type:</strong> {{ business_type | title }}</p>{% endif %}
+        <p class="mt-4 url-text"><strong>URL:</strong> {{ website }}</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{% if mockup_url %}
+<!-- Mockup link + QR code — closes the loop between this PDF and the live
+     mockup. Visible on screen AND scannable from a printed copy. -->
+<div class="section">
+  <div class="section-title">Your free mockup is ready</div>
+  <div class="mockup-link-row">
+    <div class="mockup-link-text">
+      <p>
+        We&rsquo;ve already built a free mockup of what your new website could look like &mdash;
+        fast, mobile-first, no Wix watermark, owner-editable:
+      </p>
+      <p class="mockup-url">
+        <a href="{{ mockup_url }}" target="_blank">{{ mockup_url }}</a>
+      </p>
+      <p class="text-muted">
+        Or scan the QR code on the right with your phone camera.
+      </p>
+    </div>
+    {% if mockup_qr_data_uri %}
+    <div class="mockup-qr">
+      <img src="{{ mockup_qr_data_uri }}" alt="QR code linking to your live mockup" />
+      <div class="mockup-qr-caption">Scan to view</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<!-- CTA footer -->
+
+<div class="cta-footer">
+  <h3>Ready for a modern website that works for your business?</h3>
+  <p>
+    Client Compass builds fast, mobile-first websites for South African trades and service businesses.
+    No subscriptions to Wix or WordPress. You own your site outright.
+    Most projects delivered in 2&ndash;3 weeks &mdash; we&rsquo;ll confirm a timeline in your proposal.
+  </p>
+  <div class="contact">
+    info@clientcompass.co.za &bull; +27 74 094 0550 &bull; clientcompass.co.za
+  </div>
+</div>
+
+</body>
+</html>

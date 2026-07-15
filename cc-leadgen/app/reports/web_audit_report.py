@@ -15,9 +15,18 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Lazy import — see _generate_qr_data_uri() below
+import base64 as _base64
+from io import BytesIO as _BytesIO
 from typing import Optional
 
 from jinja2 import Environment, FileSystemLoader
+try:
+    from PIL import Image as _PILImage  # noqa: F401  (qrcode uses PilImage factory)
+except Exception:  # pragma: no cover
+    pass
+
 
 from app.utils.logger import get_logger
 from app.utils.report_assets import report_dir as _report_dir
@@ -148,6 +157,34 @@ def _slug_from_name(name: str) -> str:
     return slug[:60] or "lead"
 
 
+def _generate_qr_data_uri(url: str, *, size_px: int = 360) -> str:
+    """Return a base64-encoded PNG data URI for a QR code linking to ``url``.
+
+    Raises if the qrcode library isn't installed or any QR generation step
+    fails — callers should swallow and degrade gracefully (PDF without QR
+    is still better than no PDF).
+
+    The image is sized for ~120 CSS px in the PDF; we render at 360 device
+    pixels for crisp output on retina-style print targets.
+    """
+    import qrcode  # lazy — keeps Beat container importable without this dep
+    from qrcode.image.pil import PilImage
+    qr = qrcode.QRCode(
+        version=None,  # auto-fit
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=6,
+        border=2,
+    )
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="#1a4d5c", back_color="white", image_factory=PilImage)
+    # Skip resampling — qrcode already produces a crisp PNG sized to
+    # box_size × (modules + 2*border). Modern Pillow Resampling enums
+    # break with qrcode 8.x, so leave the image untouched.
+    buf = _BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    encoded = _base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 def generate_pdf(
     *,
     business_name: str,
@@ -167,6 +204,7 @@ def generate_pdf(
     google_rating: Optional[float] = None,
     google_review_count: Optional[int] = None,
     business_type: Optional[str] = None,
+    mockup_url: Optional[str] = None,
     output_dir: str = None,
 ) -> str:
     """Generate a web audit PDF report and return the output file path.
@@ -217,6 +255,18 @@ def generate_pdf(
         "google_review_count": google_review_count,
         "business_type":     business_type,
     }
+
+    # QR code for the live mockup (if available). Failures are silent —
+    # the report renders fine without it.
+    if mockup_url:
+        try:
+            context["mockup_qr_data_uri"] = _generate_qr_data_uri(mockup_url)
+        except Exception as exc:
+            log.warning("qr_generation_failed", url=mockup_url, error=str(exc)[:200])
+            context["mockup_qr_data_uri"] = None
+    else:
+        context["mockup_qr_data_uri"] = None
+    context["mockup_url"] = mockup_url
 
     env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
     template = env.get_template("web_audit_report.html")

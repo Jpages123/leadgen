@@ -36,6 +36,18 @@ from app.db.sync_session import sync_session_scope
 from app.models import Lead
 from app.utils.email_builder import render_email_for_lead
 from app.utils.email_modern_builder import render_modern_web_revamp
+
+
+def _slugify_for_attachment(name: str) -> str:
+    """Business name → attachment-safe slug.
+
+    Strips non-alphanumeric chars, collapses runs, keeps Title Case.
+    Used purely for the MIME attachment filename; the file on disk
+    keeps its original <slug>.pdf name in <project>/.cache/reports/.
+    """
+    import re as _re
+    s = _re.sub(r"[^A-Za-z0-9]+", "-", (name or "")).strip("-")
+    return s[:80] or "lead"
 from app.utils.mockup_screenshot import capture_and_upload_screenshot
 from app.utils.logger import get_logger
 
@@ -400,9 +412,12 @@ def send_email_draft(self, draft_id: str) -> dict:
             import os
             with open(resolved_pdf, "rb") as f:
                 pdf_data = f.read()
-            filename = os.path.basename(resolved_pdf).replace("-", "_")
+            _display_name = getattr(lead, "business_name", None) if lead is not None else None
+            if not _display_name:
+                _display_name = os.path.basename(resolved_pdf).replace(".pdf", "").replace("_", " ").replace("-", " ").title()
+            _attachment = "Your-Website-Audit-" + _slugify_for_attachment(_display_name) + ".pdf"
             pdf_part = MIMEApplication(pdf_data, _subtype="pdf")
-            pdf_part.add_header("Content-Disposition", "attachment", filename=f"web_audit_{filename}")
+            pdf_part.add_header("Content-Disposition", "attachment", filename=_attachment)
             msg.attach(pdf_part)
         except Exception as exc:
             log.warning("draft_pdf_attach_failed", path=str(resolved_pdf), error=str(exc))
