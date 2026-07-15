@@ -12,6 +12,7 @@ from . import load_lead as lead_mod
 from . import verify as verify_mod
 from . import write_approval as approval_mod
 from . import write_config as config_mod
+from app.utils.mockup_build import mockup_project_dir
 
 
 def _ok(data: dict) -> int:
@@ -64,6 +65,8 @@ def cmd_copy_assets(args: argparse.Namespace) -> int:
             logo_path=args.logo,
             hero_path=args.hero,
             gallery_paths=gallery,
+            business_name=args.business_name,
+            accent_color=args.accent_color,
             build_dir=args.build_dir,
         )
         return _ok(result)
@@ -130,14 +133,14 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("clone_template", help="Clone a template repo")
     p.add_argument("template", choices=["trades", "creative", "general"])
     p.add_argument("slug")
-    p.add_argument("--build-dir", default="/tmp/cc_mockups")
+    p.add_argument("--build-dir", default="")
 
     # write_config
     p = sub.add_parser("write_config", help="Write client.ts + brand.ts files")
     p.add_argument("slug")
     p.add_argument("--client-ts-file", required=True)
     p.add_argument("--brand-ts-file", required=True)
-    p.add_argument("--build-dir", default="/tmp/cc_mockups")
+    p.add_argument("--build-dir", default="")
 
     # copy_assets
     p = sub.add_parser("copy_assets", help="Copy scraped images into project")
@@ -145,18 +148,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--logo", default=None)
     p.add_argument("--hero", default=None)
     p.add_argument("--gallery", default="", help="Comma-separated paths")
-    p.add_argument("--build-dir", default="/tmp/cc_mockups")
+    p.add_argument("--business-name", default="Business")
+    p.add_argument("--accent-color", default="#1a4d5c")
+    p.add_argument("--build-dir", default="")
 
     # build
     p = sub.add_parser("build", help="pnpm install + pnpm build")
     p.add_argument("slug")
-    p.add_argument("--build-dir", default="/tmp/cc_mockups")
+    p.add_argument("--build-dir", default="")
     p.add_argument("--timeout", type=int, default=180)
 
     # deploy
     p = sub.add_parser("deploy", help="wrangler deploy + DNS")
     p.add_argument("slug")
-    p.add_argument("--build-dir", default="/tmp/cc_mockups")
+    p.add_argument("--build-dir", default="")
 
     # verify
     p = sub.add_parser("verify", help="Programmatic mockup verification")

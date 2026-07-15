@@ -6,10 +6,13 @@ import time
 from pathlib import Path
 
 from app.utils.cloudflare_deploy import deploy_pages, create_dns_record
+from app.utils.mockup_build import mockup_project_dir
 
 
-def deploy(slug: str, build_dir: str = "/tmp/cc_mockups") -> dict:
+def deploy(slug: str, build_dir: str = "") -> dict:
     """Full deploy: Pages + DNS. Returns the clientcompass.co.za demo URL."""
+    if not build_dir:
+        build_dir = str(mockup_project_dir(slug))
     project = Path(build_dir) / slug
     dist = project / "dist"
     if not dist.exists():

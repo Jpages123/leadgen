@@ -1,14 +1,17 @@
 """Write client.ts + brand.ts into the cloned template."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+from app.utils.mockup_build import mockup_project_dir
 
 
 def write_config(
     slug: str,
     client_ts_file: Path,
     brand_ts_file: Path,
-    build_dir: str = "/tmp/cc_mockups",
+    build_dir: str = "",
 ) -> dict:
     """Copy the LLM-generated client.ts and brand.ts into the template.
 
@@ -16,6 +19,8 @@ def write_config(
     passing file paths to this helper. We copy (not move) so the LLM can re-edit
     during iteration loops.
     """
+    if not build_dir:
+        build_dir = str(mockup_project_dir(slug))
     project = Path(build_dir) / slug
     config_dir = project / "src" / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -35,7 +40,6 @@ def write_config(
         raise ValueError("brand.ts is missing `export const brand` declaration")
 
     # Check for the Session 10 bug: unquoted logo path
-    import re
     # Match `logo: <value>,` and check if value is unquoted
     logo_match = re.search(r"^\s*logo:\s*(.+?),", client_content, re.MULTILINE)
     if logo_match:

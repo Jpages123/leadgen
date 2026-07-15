@@ -23,11 +23,14 @@ from app.db.sync_session import sync_session_scope
 from app.models.lead import Lead
 from app.utils.client_ts_generator import slugify
 from app.utils.logger import get_logger
+from app.utils.pi_slot import pi_slot
 from sqlalchemy import select
+from app.utils.mockup_build import mockup_project_dir
 
 log = get_logger(__name__)
 
-MOCKUP_BUILD_DIR = Path("/tmp/cc_mockups")
+# Build dir is per-slug, durable — see app/utils/mockup_build.py.
+# Use mockup_project_dir(slug) at call sites instead of a constant.
 SKILL_PATH = "/app/.pi-docker/agent/extensions/mockup-builder.ts"
 PI_BIN = "/root/.npm-global/bin/pi"
 DEFAULT_TIMEOUT_S = 300
@@ -144,18 +147,26 @@ Important constraints:
 - Wrap your final answer in <final>...</final> tags for easy extraction.
 """
 
+    # Acquire a Redis-backed pi subprocess slot before spawning the subprocess.
+    # Without this guard, N concurrent generate_mockup tasks would all race for
+    # pi's internal lock and most would hit the subprocess 300s timeout waiting.
+    # The slot pool guarantees only  (default 1) pi processes
+    # run simultaneously; the rest queue in Redis via BLPOP and release on exit.
+    slot_timeout = get_settings().pi_slot_timeout_s
+
     try:
-        proc = subprocess.run(
-            [PI_BIN, "-p", prompt, "--extension", SKILL_PATH, "--no-skills"],
-            capture_output=True, text=True, timeout=DEFAULT_TIMEOUT_S,
-            env={
-                **os.environ,
-                "PATH": f"/root/.npm-global/bin:{os.environ.get('PATH', '')}",
-                "MOCKUP_PROJECT_ROOT": "/app",
-                "MOCKUP_PYTHON_BIN": "/app/.venv/bin/python",
-            },
-            cwd="/app",
-        )
+        with pi_slot(timeout=slot_timeout):
+            proc = subprocess.run(
+                [PI_BIN, "-p", prompt, "--extension", SKILL_PATH, "--no-skills"],
+                capture_output=True, text=True, timeout=DEFAULT_TIMEOUT_S,
+                env={
+                    **os.environ,
+                    "PATH": f"/root/.npm-global/bin:{os.environ.get('PATH', '')}",
+                    "MOCKUP_PROJECT_ROOT": "/app",
+                    "MOCKUP_PYTHON_BIN": "/app/.venv/bin/python",
+                },
+                cwd="/app",
+            )
 
         if proc.returncode != 0:
             log.error("mockup_pi_subprocess_failed",
@@ -200,6 +211,12 @@ Important constraints:
         return {"status": "ok", "mockup_url": mockup_url,
                 "lead_id": lead_id, "summary": final}
 
+    except TimeoutError as exc:
+        # Raised by pi_slot() when no slot became available within slot_timeout.
+        # Distinct from subprocess.TimeoutExpired (the subprocess itself hanging).
+        log.error("mockup_pi_slot_timeout", lead_id=lead_id, slot_timeout=slot_timeout)
+        _mark_failed(lead_id)
+        return {"status": "error", "reason": "pi_slot_timeout"}
     except subprocess.TimeoutExpired:
         log.error("mockup_pi_timeout", lead_id=lead_id, timeout=DEFAULT_TIMEOUT_S)
         _mark_failed(lead_id)
