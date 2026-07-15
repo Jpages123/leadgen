@@ -49,7 +49,6 @@ WHATSAPP_NUMBER = "27740940550"  # SA format, no '+'
 PHONE_DISPLAY = "+27 74 094 0550"
 
 COMPANY_NAME = "Client Compass Digital Solutions Pty (Ltd)"
-COMPANY_ADDRESS = "11 Nepeta Street, East-Rural, Kraaifontein, 7570, South Africa"
 COMPANY_EMAIL = "info@clientcompass.co.za"
 
 
@@ -359,14 +358,13 @@ def render_modern_web_revamp(
     </td>
   </tr>
 
-  <!-- ═══ FOOTER (with company info per operator directive) ═══ -->
+  <!-- ═══ FOOTER (company name + email; physical address removed per operator directive 2026-07-15) ═══ -->
   <tr>
     <td style="padding:24px 32px;background:#f8fafc;border-top:1px solid {BRAND_BORDER};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:12px;line-height:1.6;color:{BRAND_TEXT_LIGHT};">
       <p style="margin:0 0 6px 0;font-weight:600;color:{BRAND_TEXT_MUTED};">
         {_esc(COMPANY_NAME)}
       </p>
       <p style="margin:0 0 12px 0;">
-        {_esc(COMPANY_ADDRESS)}<br>
         <a href="mailto:{COMPANY_EMAIL}" style="color:{BRAND_TEXT_MUTED};text-decoration:underline;">{COMPANY_EMAIL}</a>
       </p>
       <p style="margin:0;font-size:11px;color:{BRAND_TEXT_LIGHT};">
