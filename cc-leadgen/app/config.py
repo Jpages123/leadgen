@@ -4,6 +4,8 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import Field
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -64,9 +66,30 @@ class Settings(BaseSettings):
     discord_alert_on_error: bool = True
 
     # ── Mockup Generation ──────────────────────────────────────────────────────
+    api_key: str = Field(default="", validation_alias="CC_LEADGEN_API_KEY")
     cloudflare_api_token: str = ""
     mockup_pitch_score_threshold: int = 70
     mockup_pi_timeout: int = 60
+    # Pi subprocess slot pool — bounds concurrent pi invocations across the worker.
+    # Pi serializes internally, so >1 concurrent calls just queue and risk 300s timeout.
+    # Set to 1 by default; raise only if you have evidence the pi lock is gone.
+    pi_max_concurrent: int = Field(default=1, validation_alias="PI_MAX_CONCURRENT")
+    # How long a task will wait to acquire a slot before failing. Match or exceed
+    # DEFAULT_TIMEOUT_S in mockup_generator.py (300s) so slot waits do not surface
+    # as timeouts before the subprocess itself would.
+    pi_slot_timeout_s: int = Field(default=300, validation_alias="PI_SLOT_TIMEOUT_S")
+
+    # ── VPS integration (email asset upload target) ─────────────────────────
+    # login-portal URL that hosts the /api/email-assets/upload endpoint.
+    # Must be reachable from the laptop — typically login.clientcompass.co.za.
+    leadgen_login_base_url: str = Field(
+        default="https://login.clientcompass.co.za",
+        validation_alias="LEADGEN_LOGIN_BASE_URL",
+    )
+    mockup_regen_batch_size: int = 50  # sweep size for mockup_regen beat task
+
+    # ── Stock image fallback ──────────────────────────────────────────
+    pexels_api_key: str = ""
 
     # ── Unsubscribe JWT ───────────────────────────────────────────────
     unsubscribe_secret: str = "change-me"
@@ -77,6 +100,10 @@ class Settings(BaseSettings):
     send_mode: Literal["test", "live"] = "test"
     test_email_whitelist_csv: str = "jpages123@gmail.com,jpages123@proton.me"
     blocked_email_domains_csv: str = "gmail.com,proton.me,protonmail.com,yahoo.com,hotmail.com,outlook.com,icloud.com,mail.com,aol.com"
+    # Comma-separated website domains/URLs to reject during discovery.
+    # Entries are normalised (scheme + www stripped) before matching.
+    # Use this as a quick fallback; the preferred path is the rejected_websites DB table.
+    rejected_websites_csv: str = ""
 
     # ── Cron Schedule ─────────────────────────────────────────────────
     discovery_schedule_hour: int = 8
@@ -99,6 +126,12 @@ class Settings(BaseSettings):
     def blocked_email_domains(self) -> list[str]:
         """Parse comma-separated blocked domain list."""
         raw = self.blocked_email_domains_csv or ""
+        return [x.strip() for x in raw.split(",") if x.strip()]
+
+    @property
+    def rejected_websites(self) -> list[str]:
+        """Parse comma-separated rejected-website list (CSV config fallback)."""
+        raw = getattr(self, "rejected_websites_csv", "") or ""
         return [x.strip() for x in raw.split(",") if x.strip()]
 
     @property

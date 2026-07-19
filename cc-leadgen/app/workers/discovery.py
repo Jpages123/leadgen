@@ -1,44 +1,50 @@
-"""Discovery worker tasks — scrapes yellsa + cylex, deduplicates, saves to DB."""
+"""Discovery worker tasks — scrapes Google Places (primary), yellsa + cylex (legacy/disabled).
+Sources:
+  google_places — ✅ Primary. Returns leads with website URLs. Requires GOOGLE_PLACES_API_KEY.
+  yellsa        — ❌ Dead (pivoted to Cameroon). Kept for reference but skipped by default.
+  cylex         — ❌ Dead (Cloudflare 403). Kept for reference but skipped by default.
+"""
 from __future__ import annotations
-
 from datetime import datetime, timezone
-
+from typing import Union
 import sqlalchemy as sa
 from celery import shared_task
-
 from app.config import get_settings
 from app.db.sync_session import sync_session_scope
 from app.models import DiscoveryJob, Lead
 from app.scrapers import (
     CylexLead,
+    GooglePlacesLead,
     YellsaLead,
     run_cylex_discovery,
+    run_google_places_discovery,
     run_yellsa_discovery,
 )
 from app.scrapers.base import classify_business_type, infer_city_and_province, normalise_phone
 from app.utils.logger import get_logger
+from app.utils.rejected_websites import is_rejected, refresh
 
 log = get_logger(__name__)
-
-DEFAULT_VERTICALS = ["hair salon", "nail salon", "beauty salon"]
-DEFAULT_CITIES = ["cape-town", "johannesburg", "durban", "pretoria", "port-elizabeth"]
-DEFAULT_MAX_PAGES = 10
-
-
+# Google Places verticals — web revamp ICP (priority order from WEB_REVAMP_ENGINE.md)
+DEFAULT_VERTICALS = [
+    "plumber",
+    "electrician",
+    "builder",
+    "cleaning service",
+    "photographer",
+    "event planner",
+]
+DEFAULT_CITIES = ["Cape Town", "Johannesburg", "Durban", "Pretoria", "Port Elizabeth", "Bloemfontein", "East London", "Nelspruit", "Polokwane", "Pietermaritzburg", "George", "Kimberley"]
+DEFAULT_MAX_PAGES = 3  # 3 pages × 20 results = up to 60 per vertical/city combo
 # ── Deduplication ─────────────────────────────────────────────────────────────
-
-
-def _build_dedup_key(lead: Lead | YellsaLead | CylexLead) -> str:
-    """Build a deduplication key: normalised phone OR (name_lower + city_lower).
-
-    Both scrapers and DB leads use the same key so we can cross-dedup.
-    """
+LeadInput = Union[YellsaLead, CylexLead, GooglePlacesLead]
+def _build_dedup_key(lead: LeadInput) -> str:
+    """Build a deduplication key: normalised phone OR (name_lower + city_lower)."""
     phone = getattr(lead, "phone", None) or getattr(lead, "whatsapp_number", None)
     if phone:
         norm = normalise_phone(phone)
         if norm:
             return f"phone:{norm}"
-
     name = (getattr(lead, "business_name", None) or "").lower().strip()
     city = (getattr(lead, "city", None) or "").lower().strip()
     if name and city:
@@ -46,31 +52,41 @@ def _build_dedup_key(lead: Lead | YellsaLead | CylexLead) -> str:
     if name:
         return f"name:{name[:80]}"
     return ""
-
-
-def _lead_to_row(data: YellsaLead | CylexLead) -> dict:
+def _lead_to_row(data: LeadInput) -> dict:
     """Convert scraper dataclass to Lead insert dict."""
-    city, province = infer_city_and_province(data.city or "")
-    biz_type = data.business_type or classify_business_type(data.business_name)
-
-    return {
-        "source": "yellsa" if isinstance(data, YellsaLead) else "cylex",
-        "source_url": data.source_url,
+    if isinstance(data, YellsaLead):
+        source = "yellsa"
+    elif isinstance(data, CylexLead):
+        source = "cylex"
+    else:
+        source = "google_places"
+    city_raw = getattr(data, "city", None) or ""
+    if isinstance(data, GooglePlacesLead):
+        # Google Places already has city + province parsed
+        city = data.city
+        province = data.province
+    else:
+        city, province = infer_city_and_province(city_raw)
+    biz_type = getattr(data, "business_type", None) or classify_business_type(data.business_name)
+    row = {
+        "source": source,
+        "source_url": getattr(data, "source_url", None),
         "business_name": data.business_name,
-        "phone": data.phone,
-        "email": data.email,
-        "website": data.website,
+        "phone": getattr(data, "phone", None),
+        "email": getattr(data, "email", None),
+        "website": getattr(data, "website", None),
         "city": city,
         "province": province,
         "business_type": biz_type,
         "status": "discovered",
         "discovered_at": datetime.now(timezone.utc),
     }
-
-
+    # Google Places extras
+    if isinstance(data, GooglePlacesLead):
+        row["google_rating"] = data.google_rating
+        row["google_review_count"] = data.google_review_count
+    return row
 # ── Update discovery job ───────────────────────────────────────────────────────
-
-
 def _mark_job_done(job_id: str | None, source: str, leads_found: int, leads_new: int,
                    error: str | None = None) -> None:
     """Update discovery_jobs row with final results."""
@@ -89,11 +105,7 @@ def _mark_job_done(job_id: str | None, source: str, leads_found: int, leads_new:
                 session.add(job)
     except Exception as exc:
         log.error("discovery_job_update_failed", job_id=job_id, error=str(exc))
-
-
 # ── Main task ─────────────────────────────────────────────────────────────────
-
-
 @shared_task(bind=True, name="app.workers.discovery.tasks.run_daily_discovery")
 def run_daily_discovery(
     self,
@@ -102,82 +114,90 @@ def run_daily_discovery(
     sources: list[str] | None = None,
     max_pages: int | None = None,
 ) -> dict:
-    """Run lead discovery across yellsa + cylex.
-
+    """Run lead discovery.
     Args:
         job_id: discovery_jobs.id to update with results.
-        vertical: Single vertical to focus on (None = all top 3).
-        sources: List of sources to run ('yellsa', 'cylex'). None = both.
+        vertical: Single vertical to focus on (None = all defaults).
+        sources: List of sources to run. Defaults to ['google_places'].
+                 Pass ['yellsa', 'cylex'] only for legacy testing.
         max_pages: Max pages per source/city combo.
     """
     settings = get_settings()
-    sources = sources or ["yellsa", "cylex"]
+    sources = sources or ["google_places"]
     verticals = [vertical] if vertical else DEFAULT_VERTICALS
-    max_pages = max_pages or settings.yellsa_max_pages
-    delay_between = 1.0  # polite delay between category/city combos
-
+    max_pages = max_pages or DEFAULT_MAX_PAGES
     log.info("discovery_run_start", job_id=job_id, verticals=verticals, sources=sources)
-
+    # Refresh rejected-websites cache so newly added entries take effect.
+    refresh()
     total_found = 0
     total_new = 0
     errors: list[str] = []
-
-    for vertical in verticals:
-        for source in sources:
-            try:
-                if source == "yellsa":
-                    results = run_yellsa_discovery(
-                        verticals=[vertical],
-                        cities=DEFAULT_CITIES,
-                        max_pages=max_pages,
-                    )
-                elif source == "cylex":
-                    results = run_cylex_discovery(
-                        verticals=[vertical],
-                        cities=DEFAULT_CITIES,
-                        max_pages=max_pages,
-                    )
-                else:
-                    continue
-
+    for source in sources:
+        try:
+            if source == "google_places":
+                results = run_google_places_discovery(
+                    verticals=verticals,
+                    cities=DEFAULT_CITIES,
+                    max_pages=max_pages,
+                )
                 for result in results:
                     if result.error:
-                        errors.append(f"{source}/{result.category}/{result.city}: {result.error}")
+                        errors.append(f"google_places/{result.vertical}/{result.city}: {result.error}")
                         continue
-
                     log.info(
                         "discovery_batch_done",
                         source=source,
-                        category=result.category,
+                        vertical=result.vertical,
                         city=result.city,
-                        pages=result.pages_scraped,
+                        pages=result.pages_fetched,
                         leads=len(result.leads),
                     )
-
-                    # Deduplicate + save to DB
                     new_leads, skipped = _upsert_leads(result.leads, source)
                     total_found += len(result.leads)
                     total_new += new_leads
-
                     log.info(
                         "discovery_upsert_done",
                         source=source,
+                        vertical=result.vertical,
                         city=result.city,
                         new=new_leads,
                         skipped=skipped,
                     )
-
-            except Exception as exc:
-                log.error("discovery_source_failed", source=source, error=str(exc))
-                errors.append(f"{source}: {exc}")
-
-    # Mark job done
+            elif source == "yellsa":
+                results = run_yellsa_discovery(
+                    verticals=verticals,
+                    cities=[c.lower().replace(" ", "-") for c in DEFAULT_CITIES],
+                    max_pages=max_pages,
+                )
+                for result in results:
+                    if result.error:
+                        errors.append(f"yellsa/{result.category}/{result.city}: {result.error}")
+                        continue
+                    new_leads, skipped = _upsert_leads(result.leads, source)
+                    total_found += len(result.leads)
+                    total_new += new_leads
+            elif source == "cylex":
+                results = run_cylex_discovery(
+                    verticals=verticals,
+                    cities=[c.lower().replace(" ", "-") for c in DEFAULT_CITIES],
+                    max_pages=max_pages,
+                )
+                for result in results:
+                    if result.error:
+                        errors.append(f"cylex/{result.category}/{result.city}: {result.error}")
+                        continue
+                    new_leads, skipped = _upsert_leads(result.leads, source)
+                    total_found += len(result.leads)
+                    total_new += new_leads
+            else:
+                log.warning("discovery_unknown_source", source=source)
+        except Exception as exc:
+            log.error("discovery_source_failed", source=source, error=str(exc))
+            errors.append(f"{source}: {exc}")
     final_error = "; ".join(errors[:5]) if errors else None
     if job_id:
-        _mark_job_done(job_id, "multi", total_found, total_new, final_error)
-
+        _mark_job_done(job_id, ",".join(sources), total_found, total_new, final_error)
     log.info("discovery_run_done", found=total_found, new=total_new, errors=len(errors))
-
     return {
         "status": "ok",
         "job_id": job_id,
@@ -185,32 +205,23 @@ def run_daily_discovery(
         "leads_new": total_new,
         "errors": errors,
     }
-
-
-def _upsert_leads(leads: list[YellsaLead | CylexLead], source: str) -> tuple[int, int]:
+def _upsert_leads(leads: list[LeadInput], source: str) -> tuple[int, int]:
     """Deduplicate incoming leads against DB and insert new ones.
-
     Returns (new_count, skipped_count).
     """
     if not leads:
         return 0, 0
-
-    # Build dedup keys for incoming
-    incoming_keys: dict[str, YellsaLead | CylexLead] = {}
+    incoming_keys: dict[str, LeadInput] = {}
     for lead in leads:
         key = _build_dedup_key(lead)
         if key and key not in incoming_keys:
             incoming_keys[key] = lead
-
     if not incoming_keys:
         return 0, 0
-
     with sync_session_scope() as session:
-        # Fetch existing keys from DB (only needed for dedup)
         existing_keys: set[str] = set()
         for key in incoming_keys:
             if key.startswith("phone:"):
-                # Check by normalised phone
                 phone_val = key.replace("phone:", "")
                 exists = session.query(sa.func.count(Lead.id)).filter(
                     (Lead.phone == phone_val) | (Lead.whatsapp_number == phone_val)
@@ -218,7 +229,6 @@ def _upsert_leads(leads: list[YellsaLead | CylexLead], source: str) -> tuple[int
                 if exists:
                     existing_keys.add(key)
             else:
-                # Check by name + city
                 name_part = key.replace("name:", "").split("|")[0]
                 city_part = key.split("|")[1] if "|" in key else ""
                 q = session.query(sa.func.count(Lead.id)).filter(
@@ -228,14 +238,22 @@ def _upsert_leads(leads: list[YellsaLead | CylexLead], source: str) -> tuple[int
                     q = q.filter(sa.func.lower(Lead.city) == city_part)
                 if q.scalar() > 0:
                     existing_keys.add(key)
-
         new_keys = set(incoming_keys) - existing_keys
-
         new_count = 0
+        skipped_rejected = 0
         for key in new_keys:
             lead_data = incoming_keys[key]
+            # ── Rejected-website filter ────────────────────────────────
+            # Franchise leads often share one website across many locations.
+            # Skip any lead whose website domain matches a rejected entry.
+            website = getattr(lead_data, "website", None)
+            if website and is_rejected(website):
+                skipped_rejected += 1
+                continue
+            # ─────────────────────────────────────────────────────────
             row = _lead_to_row(lead_data)
             session.add(Lead(**row))
             new_count += 1
-
+        if skipped_rejected:
+            log.info("discovery_rejected_websites_filtered", count=skipped_rejected)
         return new_count, len(existing_keys)
