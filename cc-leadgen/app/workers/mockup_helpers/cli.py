@@ -9,6 +9,7 @@ from pathlib import Path
 from . import build as build_mod
 from . import deploy as deploy_mod
 from . import load_lead as lead_mod
+from . import screenshot as screenshot_mod
 from . import verify as verify_mod
 from . import write_approval as approval_mod
 from . import write_config as config_mod
@@ -60,11 +61,17 @@ def cmd_write_config(args: argparse.Namespace) -> int:
 def cmd_copy_assets(args: argparse.Namespace) -> int:
     try:
         gallery = [p for p in (args.gallery or "").split(",") if p]
+        # --pool enables pool-based scoring (see asset_scorer.py).
+        # When omitted, falls back to the legacy hint-only behaviour.
+        pool = None
+        if args.pool:
+            pool = [p for p in args.pool.split(",") if p]
         result = build_mod.copy_assets(
             slug=args.slug,
             logo_path=args.logo,
             hero_path=args.hero,
             gallery_paths=gallery,
+            candidate_pool=pool,
             business_name=args.business_name,
             accent_color=args.accent_color,
             build_dir=args.build_dir,
@@ -108,6 +115,17 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return _err(f"verify failed: {e}", url=args.url)
 
 
+def cmd_screenshot(args: argparse.Namespace) -> int:
+    try:
+        result = screenshot_mod.screenshot(
+            url=args.url,
+            viewport=args.viewport,
+        )
+        return _ok(result)
+    except Exception as e:
+        return _err(f"screenshot failed: {e}", url=args.url)
+
+
 def cmd_write_approval(args: argparse.Namespace) -> int:
     try:
         rec = json.loads(args.recommendation_json) if args.recommendation_json else {}
@@ -148,6 +166,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--logo", default=None)
     p.add_argument("--hero", default=None)
     p.add_argument("--gallery", default="", help="Comma-separated paths")
+    p.add_argument(
+        "--pool",
+        default="",
+        help=(
+            "Comma-separated paths of all scraped images. When provided, "
+            "copy_assets runs pool-based slot scoring (see asset_scorer.py) "
+            "instead of using --logo/--hero/--gallery directly. LLM hints "
+            "still win when present in the pool."
+        ),
+    )
     p.add_argument("--business-name", default="Business")
     p.add_argument("--accent-color", default="#1a4d5c")
     p.add_argument("--build-dir", default="")
@@ -168,6 +196,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("url")
     p.add_argument("vertical", help="Business vertical (event_planner, plumber, etc.)")
 
+    # screenshot
+    p = sub.add_parser("screenshot", help="Full-page screenshot for LLM vision review")
+    p.add_argument("url")
+    p.add_argument("--viewport", choices=["desktop", "mobile"], default="desktop")
+
     # write_approval
     p = sub.add_parser("write_approval", help="Write approval row to prod DB")
     p.add_argument("lead_id")
@@ -183,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
         "build": cmd_build,
         "deploy": cmd_deploy,
         "verify": cmd_verify,
+        "screenshot": cmd_screenshot,
         "write_approval": cmd_write_approval,
     }
     return handlers[args.cmd](args)

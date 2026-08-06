@@ -4,7 +4,10 @@ Previous flow (465 lines, 7 sequential steps, 2 separate Pi subprocess calls):
     copy → analyze → config → clone → build → deploy → approval
 
 New flow: spawn ONE Pi subprocess with the mockup-builder skill loaded.
-The LLM drives the pipeline via 8 custom tools, with vision + iteration.
+The LLM drives the pipeline via 9 custom tools, with vision + iteration.
+Vision review (mockup_screenshot) is hard-gated in mockup-builder.ts —
+mockup_write_approval is blocked until a successful mockup_screenshot call
+exists earlier in the session (docs/MOCKUP_VISION_IMPLEMENTATION_PLAN.md).
 """
 from __future__ import annotations
 
@@ -13,6 +16,7 @@ import os
 import re
 import shutil
 import subprocess
+import httpx
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,8 +37,62 @@ log = get_logger(__name__)
 # Use mockup_project_dir(slug) at call sites instead of a constant.
 SKILL_PATH = "/app/.pi-docker/agent/extensions/mockup-builder.ts"
 PI_BIN = "/root/.npm-global/bin/pi"
-DEFAULT_TIMEOUT_S = 300
+DEFAULT_TIMEOUT_S = 600
 MAX_ITERATIONS = 3
+
+# Full schema for client.ts and brand.ts injected into every Pi prompt.
+# Keeps Pi from having to guess field names or types; eliminates a whole class
+# of write_config failures (wrong keys, missing quotes, wrong array formats).
+CONFIG_SCHEMA_BLOCK = """
+<config_schema>
+=== client.ts (export const client) ===
+{
+  name: string,              // Business name e.g. DGF Plumbing
+  tagline: string,           // One-line brand tagline
+  phone: string,             // e.g. +27 82 123 4567
+  whatsapp: string,          // Digits only, no + e.g. 27821234567
+  email: string,             // Contact email
+  address: string,           // Short location e.g. Cape Town, Western Cape
+  domain: string,            // e.g. dgfplumbing.co.za
+  googleMapsEmbed: string,   // Full Google Maps embed URL or 
+  services: Array<{
+    title: string,
+    description: string,
+    icon: string,            // lucide icon name e.g. wrench, star, camera
+  }>,
+  testimonials: Array<{
+    name: string,            // Reviewer first name + initial e.g. Dewald M.
+    text: string,
+    rating: number,          // 1-5
+  }>,
+  gallery: { src: string, alt: string }[],  // MUST be objects e.g. [{src:"/images/gallery/1.jpg", alt:"..."}]
+  web3FormsKey: string,      // Leave as XXXXX — operator fills in later
+  cloudflareAnalyticsToken: string,  // Leave as XXXXX
+  social: {
+    facebook: string | null,
+    instagram: string | null,
+  },
+}
+
+=== brand.ts (export const brand) ===
+{
+  template: trades | creative | general,
+  primaryColor: string,      // Hex e.g. #1a4d5c
+  accentColor: string,       // Hex e.g. #f97316
+  fontHeading: string,       // Google Font name e.g. Oswald, Playfair Display
+  fontBody: string,          // e.g. Inter
+  logoPath: string,          // MUST be quoted string: /images/logo.jpg
+  heroImage: string,         // MUST be quoted string: /images/hero.jpg
+  heroOverlayOpacity: number,  // 0-100 integer
+  darkMode: boolean,
+  ctaPriority: call | whatsapp | book | contact,
+  trustBadges: string[],     // 3-4 short trust signals e.g. [10+ Years Experience]
+  imageWatermark: boolean,   // true only for creative template
+  galleryTreatment: clean-grid | masonry,
+  servicesStyle: icon-cards | minimal-cards | list-style,
+}
+</config_schema>
+"""
 
 
 @shared_task(bind=True, name="app.workers.mockup_generator.tasks.generate_mockup")
@@ -103,8 +161,25 @@ def generate_mockup(self, lead_id: str) -> dict:
     slug = slugify(lead.business_name)
     log.info("mockup_skill_invocation_started", lead_id=lead_id, slug=slug)
 
-    # Build the prompt — concise context for the LLM
-    prompt = f"""Use the mockup-builder skill to generate a modern mockup landing page for this lead:
+    # L2: Run synchronous site snapshot BEFORE spawning Pi, so Pi has factual
+    # copy + image data in its context from the very first token.
+    from app.workers.mockup_helpers.site_snapshot import site_snapshot, format_snapshot_block
+    _snapshot = site_snapshot(lead.website, slug) if lead.website else None
+    site_snapshot_block = format_snapshot_block(_snapshot)
+    log.info(
+        "mockup_site_snapshot_complete",
+        lead_id=lead_id,
+        snapshot_ok=_snapshot is not None and _snapshot.error is None,
+        services_found=len(_snapshot.services) if _snapshot else 0,
+        images_ok=(_snapshot.hero is not None and not _snapshot.hero.is_placeholder) if _snapshot else False,
+    )
+
+    # Build the prompt — rich context for the LLM (L2: site_snapshot + schema injected)
+    prompt = f"""Use the mockup-builder skill to generate a modern mockup landing page for this lead.
+
+{CONFIG_SCHEMA_BLOCK}
+
+{site_snapshot_block}
 
 lead_id: {lead_id}
 slug: {slug}
@@ -118,32 +193,73 @@ existing_pitch_score: {lead.web_pitch_score}
 
 Workflow (use the tools in order, max {MAX_ITERATIONS} build iterations):
 
-1. mockup_load_lead(lead_id="{lead_id}") — get full context including scraped assets
-2. Use Playwright MCP to navigate to {lead.website or 'their website'} and screenshot it. Note the prospect's current visual style.
-3. Decide template based on business_type:
+1. mockup_load_lead(lead_id="{lead_id}") — get full DB context including scraped asset paths.
+2. Use Playwright MCP (browser_navigate + browser_take_screenshot) to visit {lead.website or 'their website'}.
+   The <site_snapshot> above is your PRIMARY source of truth for copy. Use Playwright only to
+   confirm the site's visual aesthetic (colours, imagery style, layout feel) — not to re-extract
+   text. If Playwright fails, proceed using only the <site_snapshot> data.
+3. Decide template based on business_type AND visual aesthetic from step 2:
    - photography / event_planning → 'creative' (Playfair Display, dark, full-bleed, gallery-first)
    - plumbing / electrical / construction / cleaning / automotive → 'trades' (Oswald, bold, trust signals)
    - everything else → 'general' (balanced)
-   Override if the existing site's aesthetic strongly suggests another template.
+   Override the default if the existing site's aesthetic strongly suggests another template.
 4. mockup_clone_template(template, "{slug}")
-5. Write client.ts and brand.ts content. Match the scraped brand color when available.
-   CRITICAL: client.ts `logo` field MUST be a quoted string like `"/images/logo.jpg"` (Session 10 regression).
+5. Write client.ts and brand.ts using the <config_schema> above as your exact field reference.
+   COPY RULES — mandatory:
+   a) services: use from <site_snapshot> if present. Do NOT invent services not on their site.
+   b) phone/email: use from <site_snapshot> if present.
+   c) testimonials: use from <site_snapshot> if present; otherwise invent 2 plausible ones.
+   d) primaryColor: match scraped_brand_color when available; choose complementary palette otherwise.
+   e) logoPath and heroImage MUST be quoted strings e.g. "/images/logo.jpg"
+   f) gallery array MUST be EXACTLY 4 entries of {{src, alt}} OBJECTS — NOT bare strings:
+      [
+        {{ src: "/images/gallery/1.jpg", alt: "<descriptive alt text>" }},
+        {{ src: "/images/gallery/2.jpg", alt: "<descriptive alt text>" }},
+        {{ src: "/images/gallery/3.jpg", alt: "<descriptive alt text>" }},
+        {{ src: "/images/gallery/4.jpg", alt: "<descriptive alt text>" }},
+      ]
+      Do NOT use bare string paths. Do NOT add hero.jpg, about.jpg, or duplicate paths.
+   g) hero image strategy: use <site_snapshot> hero local_path if available AND not placeholder.
+      If hero is unavailable/placeholder BUT <site_snapshot> has gallery images, use gallery[0].local
+      as the hero_path in mockup_copy_assets — a real event photo is always better than a gradient.
+      Only fall back to gradient (no hero_path) if no real images exist at all.
 6. mockup_write_config("{slug}", client_ts, brand_ts)
-7. mockup_copy_assets("{slug}", logo_path=..., hero_path=..., gallery_paths=..., business_name="{lead.business_name}", accent_color=<chosen>)
+7. mockup_copy_assets("{slug}", logo_path=..., hero_path=..., gallery_paths=...,
+   business_name="{lead.business_name}", accent_color=<chosen>)
+   CHECK the returned image_audit block. If hero_is_placeholder=true AND <site_snapshot> contains
+   a valid hero_local_path, call mockup_copy_assets again with that corrected hero_path.
 8. mockup_build("{slug}")
 9. mockup_deploy("{slug}")
 10. mockup_verify(<demo_url>, "{lead.business_type or 'general'}")
-11. ALSO use Playwright MCP to screenshot the live mockup and look at it. Compare to the prospect's site.
-12. If issues found, edit the config files with read/edit tools, then call mockup_build + mockup_deploy + mockup_verify again. Max {MAX_ITERATIONS} build attempts.
-13. When verify passes OR you've used all iterations: mockup_write_approval(lead_id, mockup_url, recommendation)
+    If image_audit shows placeholder_count > 0, treat as an issue requiring iteration.
+11. MANDATORY VISUAL REVIEW — mockup_write_approval is blocked until this step
+    succeeds at least once, so do not skip it: call mockup_screenshot(<demo_url>)
+    (desktop viewport at minimum; mobile viewport is strongly recommended given
+    prior mobile-overflow bugs) and actually look at the returned image before
+    writing anything else. Visually verify:
+    - Logo placement and cropping — no wide banner logos squeezed/cropped into a
+      narrow slot (the exact bug this step exists to catch).
+    - Colour palette feels consistent with the lead's brand.
+    - Hero image is real (not a grey/gradient placeholder).
+    - Layout is not broken — no overlapping text, no illegible contrast, no
+      obviously unprofessional rendering.
+    - Copy matches the lead's actual website — no invented services or wrong phone numbers.
+    You may additionally use Playwright MCP to browse the prospect's original site for
+    aesthetic reference, but mockup_screenshot is the tool that satisfies this gate.
+12. If issues found (from mockup_verify OR your own visual review in step 11), edit
+    config files with read/edit tools, then call mockup_build + mockup_deploy +
+    mockup_verify + mockup_screenshot again. Max {MAX_ITERATIONS} total build attempts.
+    If you exhaust iterations with an unresolved visual issue, say so plainly in your
+    final rationale — do not silently ship a mockup you know looks wrong.
+13. When verify passes AND the mockup_screenshot review looks right, OR iterations are
+    exhausted: mockup_write_approval(lead_id, mockup_url, recommendation)
 
 Return a final JSON: {{"status": "ok"|"failed", "mockup_url": "...", "iterations": N, "rationale": "..."}}
 
 Important constraints:
 - Token discipline: read files with offset/limit. Never read node_modules.
 - The build may take 60-90s. Be patient.
-- If mockup_build fails, READ THE ERROR, then decide whether to retry or ship.
-- If Playwright MCP fails (e.g. browser_navigate errors), fall back to mockup_verify (which is programmatic only).
+- If mockup_build fails, READ THE ERROR carefully before retrying.
 - Wrap your final answer in <final>...</final> tags for easy extraction.
 """
 
@@ -195,6 +311,38 @@ Important constraints:
             return {"status": "error", "reason": "no_mockup_url_in_output",
                     "summary": final[:500]}
 
+        # HARDENING: The LLM sometimes hallucinates success — claims it
+        # deployed the mockup without actually calling the deploy tools
+        # (mockup_pages_live / mockup_dns_live / mockup_write_approval),
+        # then reports a phantom URL. The worker used to trust that claim
+        # and flip the lead to pending_approval, leaving a row in leadgen
+        # DB with no real Cloudflare Pages project behind it.
+        #
+        # Now we verify the URL returns a real Astro site before trusting
+        # the LLM. If verification fails (DNS NXDOMAIN, HTTP non-200, body
+        # < 5KB after a brief settle, business-name not in HTML) we treat
+        # the build as failed and trigger the immediate retry.
+        with sync_session_scope() as session:
+            lead_for_verify = session.get(Lead, lead_id)
+            business_name = lead_for_verify.business_name if lead_for_verify else None
+
+        verified = _verify_mockup_url(mockup_url, business_name=business_name)
+        if not verified:
+            log.warning(
+                "mockup_url_verification_failed",
+                lead_id=lead_id,
+                url=mockup_url,
+                business_name=business_name,
+            )
+            _mark_failed(lead_id)
+            return {
+                "status": "error",
+                "reason": "mockup_url_unreachable",
+                "url": mockup_url,
+            }
+
+        log.info("mockup_url_verified", lead_id=lead_id, url=mockup_url)
+
         # The LLM is the source of truth for the mockup. It already wrote the
         # approval row in prod admin DB via mockup_write_approval. We just
         # need to finalize the leadgen DB state.
@@ -217,8 +365,10 @@ Important constraints:
         log.error("mockup_pi_slot_timeout", lead_id=lead_id, slot_timeout=slot_timeout)
         _mark_failed(lead_id)
         return {"status": "error", "reason": "pi_slot_timeout"}
-    except subprocess.TimeoutExpired:
-        log.error("mockup_pi_timeout", lead_id=lead_id, timeout=DEFAULT_TIMEOUT_S)
+    except subprocess.TimeoutExpired as exc:
+        partial = (exc.stdout or "")[-1000:] if hasattr(exc, "stdout") else ""
+        log.error("mockup_pi_timeout", lead_id=lead_id, timeout=DEFAULT_TIMEOUT_S,
+                  partial_stdout=partial)
         _mark_failed(lead_id)
         return {"status": "error", "reason": "pi_timeout"}
     except Exception as exc:
@@ -248,12 +398,115 @@ def _extract_mockup_url(final: str | None, raw: str) -> str | None:
     return None
 
 
+# Minimum body size for a real Astro mockup. The base template renders to
+# ~30 KB even with stub content; a sub-5 KB response means we got the
+# Cloudflare error page, a 0-byte CDN edge cache, or the LLM lied about
+# deploying.
+MOCKUP_MIN_BYTES = 5000
+# Some businesses have names that won't appear verbatim in the rendered
+# HTML (legal suffixes, capitalisation drift). We log a warning rather
+# than failing the build on a name mismatch.
+VERIFY_TIMEOUT_S = 20
+VERIFY_RETRIES = 2  # brief retries for Cloudflare edge cache settle
+VERIFY_RETRY_DELAY_S = 4
+
+
+def _verify_mockup_url(url: str, business_name: str | None = None) -> bool:
+    """Verify the deployed mockup actually returns a real Astro site.
+
+    Returns True only if:
+      - HTTP 200 (final response after redirects)
+      - body length >= MOCKUP_MIN_BYTES (not an error page / CDN miss)
+      - business_name (if provided) appears in the HTML (warn-only)
+
+    False on any DNS error, timeout, non-200, or undersized body.
+
+    Retries up to VERIFY_RETRIES times with VERIFY_RETRY_DELAY_S between
+    attempts to ride out Cloudflare edge cache settling after a fresh
+    Pages deploy.
+    """
+    import time as _t
+    last_err: str | None = None
+    last_status: int | None = None
+    last_size: int | None = None
+
+    for attempt in range(1, VERIFY_RETRIES + 1):
+        try:
+            r = httpx.get(
+                url,
+                timeout=VERIFY_TIMEOUT_S,
+                follow_redirects=True,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; cc-mockup-verify)"},
+            )
+            last_status = r.status_code
+            last_size = len(r.content)
+            if r.status_code == 200 and last_size >= MOCKUP_MIN_BYTES:
+                if business_name and business_name.lower() not in r.text.lower():
+                    log.warning(
+                        "mockup_verify_name_mismatch",
+                        url=url,
+                        expected=business_name,
+                        status=r.status_code,
+                        size=last_size,
+                    )
+                    # Warn-only — pass anyway, since some business names
+                    # render with subtle diffs (Pty Ltd, capitalisation).
+                return True
+            last_err = f"status={r.status_code} size={last_size}"
+        except httpx.HTTPError as exc:
+            last_err = f"{type(exc).__name__}: {exc}"
+
+        if attempt < VERIFY_RETRIES:
+            log.info(
+                "mockup_verify_retry",
+                url=url,
+                attempt=attempt,
+                max=VERIFY_RETRIES,
+                last_err=last_err,
+                last_status=last_status,
+                last_size=last_size,
+            )
+            _t.sleep(VERIFY_RETRY_DELAY_S)
+
+    log.warning(
+        "mockup_verify_exhausted",
+        url=url,
+        attempts=VERIFY_RETRIES,
+        last_status=last_status,
+        last_size=last_size,
+        last_err=last_err,
+    )
+    return False
+
+
 def _mark_failed(lead_id: str) -> None:
+    """Mark a lead as failed and schedule an immediate retry (Phase M+).
+
+    Updates leads.mockup_status to 'failed', then schedules
+    retry_single_mockup to run after mockup_auto_retry_delay_s so the
+    lead gets another shot without waiting for the 30-min beat sweep.
+
+    The retry task itself enforces the mockup_max_auto_retries cap, so
+    this function stays simple. Failure modes covered:
+      - pi_slot_timeout (legacy 300s slot wait — fixed by pi_slot v2)
+      - pi_timeout (subprocess timeout — Pi hung for DEFAULT_TIMEOUT_S)
+      - mockup_subprocess_failed (pi returned non-zero)
+      - mockup_no_url_found (LLM output didn't contain mockup_url)
+      - any other exception in the skill pipeline
+    """
     with sync_session_scope() as session:
         lead = session.get(Lead, lead_id)
         if lead:
             lead.mockup_status = "failed"
             session.add(lead)
+
+    # Schedule immediate retry. Import lazily — the regen module imports
+    # generate_mockup at module load, which would create a circular import
+    # since mockup_generator.py is imported by mockup_regen.py.
+    from app.workers.mockup_regen import retry_single_mockup
+    delay = get_settings().mockup_auto_retry_delay_s
+    retry_single_mockup.apply_async(args=[lead_id], countdown=delay)
+    log.info("mockup_auto_retry_scheduled", lead_id=lead_id, delay_s=delay)
 
 
 def _extract_final_answer(stdout: str) -> str | None:

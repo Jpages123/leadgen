@@ -13,6 +13,7 @@
  *   mockup_build            — pnpm install + pnpm build
  *   mockup_deploy           — wrangler pages deploy + DNS A record
  *   mockup_verify           — programmatic checks (HTTP, images, trade-copy regression)
+ *   mockup_screenshot       — full-page screenshot of a live URL for visual (vision) review
  *   mockup_write_approval   — insert approval row in prod admin DB
  *
  * Usage:
@@ -22,9 +23,17 @@
  * Iteration contract:
  *   - You have up to 3 build attempts. After 3 failed verify cycles, ship whatever
  *     you have and log the reason.
- *   - Use Playwright MCP (browser_navigate + browser_take_screenshot) to visually
- *     review each built mockup. mockup_verify gives you programmatic checks;
- *     your eyes give you visual fidelity.
+ *   - MANDATORY: call mockup_screenshot on the deployed mockup URL and visually
+ *     review the returned image (logo placement/cropping, image quality, layout,
+ *     colour usage) BEFORE calling mockup_write_approval. This is enforced below —
+ *     mockup_write_approval is hard-blocked until a successful mockup_screenshot
+ *     call exists earlier in the session (see the tool_call gate at the bottom of
+ *     this file). mockup_verify gives you programmatic checks; mockup_screenshot
+ *     gives you eyes.
+ *   - You may also use Playwright MCP (browser_navigate) to browse the prospect's
+ *     original site for aesthetic reference, but mockup_screenshot — not
+ *     Playwright's own screenshot tool — is what satisfies the vision gate, since
+ *     it's the one guaranteed to return the image as in-context model input.
  *   - If you need to modify config between iterations, use pi's read/edit tools
  *     on /tmp/cc_mockups/<slug>/src/config/{client,brand}.ts, then call
  *     mockup_build + mockup_deploy + mockup_verify again.
@@ -36,6 +45,9 @@ import { spawn } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+const SCREENSHOT_TOOL_NAME = "mockup_screenshot";
+const APPROVAL_TOOL_NAME = "mockup_write_approval";
 
 // ─── Configuration ─────────────────────────────────────────────────────────
 
@@ -98,6 +110,21 @@ async function callHelper(
 function toolResult(text: string, details: Record<string, unknown> = {}) {
 	return {
 		content: [{ type: "text" as const, text }],
+		details,
+	};
+}
+
+function toolResultWithImage(
+	text: string,
+	imageBase64: string,
+	mimeType: string,
+	details: Record<string, unknown> = {},
+) {
+	return {
+		content: [
+			{ type: "text" as const, text },
+			{ type: "image" as const, data: imageBase64, mimeType },
+		],
 		details,
 	};
 }
@@ -269,6 +296,66 @@ export default function mockupBuilderExtension(pi: ExtensionAPI) {
 				: `✗ Issues found: ${(result.issues as any[]).map((i) => i.name).join(", ")}. Recommend: ${result.recommendation}`;
 			return toolResult(text, result);
 		},
+	});
+
+	// ─── mockup_screenshot ──────────────────────────────────────────────
+	pi.registerTool({
+		name: SCREENSHOT_TOOL_NAME,
+		label: "Screenshot Mockup",
+		description:
+			"Capture a full-page screenshot of a URL (the deployed mockup, or the prospect's " +
+			"original site for comparison) and return it as an image for visual review. " +
+			"MANDATORY: call this on the deployed mockup URL after mockup_deploy succeeds, " +
+			"BEFORE calling mockup_write_approval — mockup_write_approval is blocked until this " +
+			"has succeeded at least once in this session. Look at colors, logo placement/cropping, " +
+			"image quality, layout, and whether anything looks broken or unprofessional.",
+		parameters: Type.Object({
+			url: Type.String({ description: "URL to screenshot" }),
+			viewport: Type.Optional(
+				Type.Union([Type.Literal("desktop"), Type.Literal("mobile")], {
+					description: "desktop (1440x900) or mobile (390x844). Defaults to desktop.",
+				}),
+			),
+		}),
+		async execute(_id, params) {
+			const viewport = params.viewport ?? "desktop";
+			const result = await callHelper("screenshot", [params.url, `--viewport=${viewport}`], DEFAULT_TIMEOUT_S);
+			if (!result.ok || typeof result.png_base64 !== "string") {
+				return toolResult(`Error: ${result.error ?? "screenshot did not return image data"}`, result);
+			}
+			const text = `Screenshot of ${params.url} (${viewport}, ${result.width}x${result.height})`;
+			return toolResultWithImage(text, result.png_base64 as string, "image/png", {
+				ok: true,
+				url: params.url,
+				viewport,
+				width: result.width,
+				height: result.height,
+			});
+		},
+	});
+
+	// ─── Hard gate: mockup_write_approval requires a prior successful
+	// mockup_screenshot call in this session. Prompt-only instructions have
+	// repeatedly failed to make the LLM actually look before approving
+	// (see docs/MOCKUP_VISION_IMPLEMENTATION_PLAN.md §2.2) — this makes it
+	// mechanically impossible to skip instead of just discouraged.
+	pi.on("tool_call", (event, ctx) => {
+		if (event.toolName !== APPROVAL_TOOL_NAME) return;
+		const sawScreenshot = ctx.sessionManager.getEntries().some(
+			(entry: any) =>
+				entry.type === "message" &&
+				entry.message?.role === "toolResult" &&
+				entry.message?.toolName === SCREENSHOT_TOOL_NAME &&
+				!entry.message?.isError,
+		);
+		if (!sawScreenshot) {
+			return {
+				block: true,
+				reason:
+					`${APPROVAL_TOOL_NAME} blocked: call ${SCREENSHOT_TOOL_NAME} on the deployed ` +
+					"mockup URL first and visually review the returned image before approving.",
+			};
+		}
 	});
 
 	// ─── mockup_write_approval ──────────────────────────────────────────

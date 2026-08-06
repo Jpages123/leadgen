@@ -5,7 +5,6 @@ from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,6 +46,13 @@ class Settings(BaseSettings):
     email_daily_limit: int = 50
     email_min_gap_hours: int = 72
 
+    # ── Follow-up Sequences (web-revamp leads only) ────────────────────
+    # Step 2 sent ~4 days after step 1; step 3 (final) sent ~5 more days
+    # after step 2 (~9 days total). Lead marked 'no_response' after step 3
+    # if no reply.
+    follow_up_step2_gap_hours: int = 96
+    follow_up_step3_gap_hours: int = 120
+
     # ── WhatsApp (deferred) ───────────────────────────────────────────
     meta_graph_version: str = "v22.0"
     whatsapp_number: str = "+27740940550"
@@ -74,10 +80,11 @@ class Settings(BaseSettings):
     # Pi serializes internally, so >1 concurrent calls just queue and risk 300s timeout.
     # Set to 1 by default; raise only if you have evidence the pi lock is gone.
     pi_max_concurrent: int = Field(default=1, validation_alias="PI_MAX_CONCURRENT")
-    # How long a task will wait to acquire a slot before failing. Match or exceed
-    # DEFAULT_TIMEOUT_S in mockup_generator.py (300s) so slot waits do not surface
-    # as timeouts before the subprocess itself would.
-    pi_slot_timeout_s: int = Field(default=300, validation_alias="PI_SLOT_TIMEOUT_S")
+    # How long a task will wait to acquire a slot before failing. Default 0 =
+    # block indefinitely (Redis BLPOP timeout=0). Set a positive int if you want
+    # a hard cap; note that the subprocess timeout in mockup_generator.py
+    # (DEFAULT_TIMEOUT_S) is the real hang detector for stuck pi invocations.
+    pi_slot_timeout_s: int = Field(default=0, validation_alias="PI_SLOT_TIMEOUT_S")
 
     # ── VPS integration (email asset upload target) ─────────────────────────
     # login-portal URL that hosts the /api/email-assets/upload endpoint.
@@ -87,6 +94,15 @@ class Settings(BaseSettings):
         validation_alias="LEADGEN_LOGIN_BASE_URL",
     )
     mockup_regen_batch_size: int = 50  # sweep size for mockup_regen beat task
+    # Immediate auto-retry cap. retry_single_mockup dispatches generate_mockup
+    # again after each failure until mockup_retry_count >= this. Set to 0 to
+    # disable immediate retries entirely (fall back to the 30-min beat sweep).
+    mockup_max_auto_retries: int = Field(default=3, validation_alias="MOCKUP_MAX_AUTO_RETRIES")
+    # How long _mark_failed waits before scheduling retry_single_mockup.
+    # Gives transient issues (e.g. flaky Cloudflare Pages deploy) time to
+    # settle before the retry hits. Bump to 300+ if you're seeing retry
+    # storms during partial outages.
+    mockup_auto_retry_delay_s: int = Field(default=60, validation_alias="MOCKUP_AUTO_RETRY_DELAY_S")
 
     # ── Stock image fallback ──────────────────────────────────────────
     pexels_api_key: str = ""
@@ -133,6 +149,18 @@ class Settings(BaseSettings):
         """Parse comma-separated rejected-website list (CSV config fallback)."""
         raw = getattr(self, "rejected_websites_csv", "") or ""
         return [x.strip() for x in raw.split(",") if x.strip()]
+
+    # ── Mockup post-approval cleanup (Session 25, 2026-08-06) ───────
+    # When the operator approves a mockup in /admin/mockup-approvals, the
+    # ``app.workers.mockup_cleanup.cleanup_approved_mockup`` task is
+    # dispatched from ``sync_approvals``. It removes the build dir +
+    # audit cache + local PDF (saves ~150MB per approved mockup) while
+    # keeping the live deployed mockup, the approval row, and the email
+    # draft trail intact.
+    #
+    # Set ``CLEANUP_ON_APPROVAL=false`` in .env to opt out globally (e.g.
+    # if an operator wants to inspect post-approval build artefacts).
+    cleanup_on_approval: bool = Field(default=True, validation_alias="CLEANUP_ON_APPROVAL")
 
     @property
     def database_url_sync(self) -> str:
