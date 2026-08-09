@@ -220,23 +220,28 @@ Workflow (use the tools in order, max {MAX_ITERATIONS} build iterations):
    c) testimonials: use from <site_snapshot> if present; otherwise invent 2 plausible ones.
    d) primaryColor: match scraped_brand_color when available; choose complementary palette otherwise.
    e) logoPath and heroImage MUST be quoted strings e.g. "/images/logo.jpg"
-   f) gallery array MUST be EXACTLY 4 entries of {{src, alt}} OBJECTS — NOT bare strings:
+   f) gallery array format is {{src, alt}} OBJECTS — NOT bare strings:
       [
         {{ src: "/images/gallery/1.jpg", alt: "<descriptive alt text>" }},
         {{ src: "/images/gallery/2.jpg", alt: "<descriptive alt text>" }},
-        {{ src: "/images/gallery/3.jpg", alt: "<descriptive alt text>" }},
-        {{ src: "/images/gallery/4.jpg", alt: "<descriptive alt text>" }},
+        ...
       ]
-      Do NOT use bare string paths. Do NOT add hero.jpg, about.jpg, or duplicate paths.
+      Do NOT use bare string paths. Do NOT add hero.jpg, about.jpg as gallery entries.
       Every gallery image MUST be an actual photograph of the business's work, premises,
       staff, product, or events. Do NOT select a scraped asset that is a logo, an icon,
       a generic marketing graphic (e.g. a stock "LIVE STREAMING" badge, a social-media
-      icon, an award/accreditation badge), or a screenshot of a webpage/UI. If a candidate
-      you initially picked turns out to be one of these (e.g. you spot it during the visual
-      review in step 11), replace it — the array MUST STILL contain EXACTLY 4 entries
-      afterwards (the grid layout breaks with 3). Reuse a different already-selected real
-      photo path (with a distinct, accurate alt text) for the freed-up slot rather than
-      shrinking the array. Never drop below 4 entries. Flag any reuse in your rationale.
+      icon, an award/accreditation badge), or a screenshot of a webpage/UI.
+      NEVER use the exact same image file path more than once in the array — a gallery
+      showing the same photo repeated (even cropped differently by the grid) is an
+      obvious, embarrassing bug and has shipped before. Count the DISTINCT real photos
+      <site_snapshot> actually gives you (check byte sizes / URLs, not just count):
+        - 4+ distinct real photos available: use 4, one each, no repeats.
+        - 2-3 distinct real photos available: use only that many entries (2 or 3) —
+          a slightly shorter gallery looks fine; a repeated photo does not.
+        - 0-1 distinct real photos available: use what you have (1 entry, or 0 to hide
+          the section if the template supports it) and say so plainly in your rationale
+          so the operator knows to source more photos manually — do not manufacture
+          duplicates to hit a target count.
    g) hero image strategy: use <site_snapshot> hero local_path if available AND not placeholder.
       If hero is unavailable/placeholder BUT <site_snapshot> has gallery images, use gallery[0].local
       as the hero_path in mockup_copy_assets — a real event photo is always better than a gradient.
@@ -272,6 +277,9 @@ Workflow (use the tools in order, max {MAX_ITERATIONS} build iterations):
       specifically since it has appeared before.
     - Gallery and About images are real photographs (people, premises, products,
       events) — not logos, icons, or generic stock/marketing graphics.
+    - Gallery images are actually different from each other — if two or more tiles
+      look like the exact same photo (even cropped differently), that means you
+      duplicated a src path; fix the gallery array per COPY RULE (f) above.
     - Logo placement and cropping — no wide banner logos squeezed/cropped into a
       narrow slot (the exact bug this step exists to catch).
     - Colour palette feels consistent with the lead's brand.
