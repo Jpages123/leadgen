@@ -58,7 +58,16 @@ CONFIG_SCHEMA_BLOCK = """
   services: Array<{
     title: string,
     description: string,
-    icon: string,            // lucide icon name e.g. wrench, star, camera
+    icon: string,            // MUST be exactly one of: bolt, flame, droplet, home, building,
+                              // search, wrench. This is the COMPLETE set implemented in the
+                              // template — there is no lucide/icon-font lookup. ANY other value
+                              // (including plausible-sounding ones like "camera", "star",
+                              // "megaphone", "stage") silently renders the SAME generic wrench
+                              // icon on every single card, which is visually broken (identical
+                              // icon repeated 3-6x). Pick the closest semantic match from the
+                              // 7 above even if imperfect — e.g. "search" for inspection/
+                              // consultation services, "building" for structures/venues,
+                              // "bolt" for anything technical/electrical/fast-turnaround.
   }>,
   testimonials: Array<{
     name: string,            // Reviewer first name + initial e.g. Dewald M.
@@ -219,10 +228,23 @@ Workflow (use the tools in order, max {MAX_ITERATIONS} build iterations):
         {{ src: "/images/gallery/4.jpg", alt: "<descriptive alt text>" }},
       ]
       Do NOT use bare string paths. Do NOT add hero.jpg, about.jpg, or duplicate paths.
+      Every gallery image MUST be an actual photograph of the business's work, premises,
+      staff, product, or events. Do NOT select a scraped asset that is a logo, an icon,
+      a generic marketing graphic (e.g. a stock "LIVE STREAMING" badge, a social-media
+      icon, an award/accreditation badge), or a screenshot of a webpage/UI. If a candidate
+      you initially picked turns out to be one of these (e.g. you spot it during the visual
+      review in step 11), replace it — the array MUST STILL contain EXACTLY 4 entries
+      afterwards (the grid layout breaks with 3). Reuse a different already-selected real
+      photo path (with a distinct, accurate alt text) for the freed-up slot rather than
+      shrinking the array. Never drop below 4 entries. Flag any reuse in your rationale.
    g) hero image strategy: use <site_snapshot> hero local_path if available AND not placeholder.
       If hero is unavailable/placeholder BUT <site_snapshot> has gallery images, use gallery[0].local
       as the hero_path in mockup_copy_assets — a real event photo is always better than a gradient.
       Only fall back to gradient (no hero_path) if no real images exist at all.
+   h) Do not write near-duplicate content: no two services with overlapping names/descriptions
+      (e.g. "Electrical Maintenance" and "Electrical & Maintenance" describing the same thing —
+      merge or differentiate them), and the two "About" paragraphs must each add distinct
+      information rather than restating the same sentence in different words.
 6. mockup_write_config("{slug}", client_ts, brand_ts)
 7. mockup_copy_assets("{slug}", logo_path=..., hero_path=..., gallery_paths=...,
    business_name="{lead.business_name}", accent_color=<chosen>)
@@ -236,14 +258,29 @@ Workflow (use the tools in order, max {MAX_ITERATIONS} build iterations):
     succeeds at least once, so do not skip it: call mockup_screenshot(<demo_url>)
     (desktop viewport at minimum; mobile viewport is strongly recommended given
     prior mobile-overflow bugs) and actually look at the returned image before
-    writing anything else. Visually verify:
+    writing anything else. Go through EVERY item below individually and note what
+    you actually see for each one — a generic "reviewed, looks clean, no issues"
+    is not an acceptable rationale. If you cannot verify an item from the
+    screenshot, say so explicitly rather than assuming it's fine:
+    - Service card icons: zoom in mentally on the icon inside each service card.
+      Are they visually DIFFERENT from each other? If every card shows the exact
+      same glyph, you used an icon name outside the 7 supported values (see
+      <config_schema> icon field) — go back and fix it to one of the 7 valid names.
+    - Section headings ("Our Services", "Gallery", "About", "Reviews") must be
+      clearly legible against their background. On dark backgrounds, dark text
+      is invisible even if it "should" be styled as a heading — look for this
+      specifically since it has appeared before.
+    - Gallery and About images are real photographs (people, premises, products,
+      events) — not logos, icons, or generic stock/marketing graphics.
     - Logo placement and cropping — no wide banner logos squeezed/cropped into a
       narrow slot (the exact bug this step exists to catch).
     - Colour palette feels consistent with the lead's brand.
     - Hero image is real (not a grey/gradient placeholder).
     - Layout is not broken — no overlapping text, no illegible contrast, no
-      obviously unprofessional rendering.
-    - Copy matches the lead's actual website — no invented services or wrong phone numbers.
+      empty/blank rectangles where an image or content should be, no obviously
+      unprofessional rendering.
+    - Copy matches the lead's actual website — no invented services, no wrong
+      phone numbers, no two services or paragraphs that just restate each other.
     You may additionally use Playwright MCP to browse the prospect's original site for
     aesthetic reference, but mockup_screenshot is the tool that satisfies this gate.
 12. If issues found (from mockup_verify OR your own visual review in step 11), edit
