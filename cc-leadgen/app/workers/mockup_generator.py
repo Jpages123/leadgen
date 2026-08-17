@@ -204,9 +204,30 @@ Workflow (use the tools in order, max {MAX_ITERATIONS} build iterations):
 
 1. mockup_load_lead(lead_id="{lead_id}") — get full DB context including scraped asset paths.
 2. Use Playwright MCP (browser_navigate + browser_take_screenshot) to visit {lead.website or 'their website'}.
-   The <site_snapshot> above is your PRIMARY source of truth for copy. Use Playwright only to
+   The <site_snapshot> above is your PRIMARY source of truth for copy. Use Playwright to
    confirm the site's visual aesthetic (colours, imagery style, layout feel) — not to re-extract
    text. If Playwright fails, proceed using only the <site_snapshot> data.
+   IMAGE FALLBACK — <site_snapshot> only does a static HTML fetch of the homepage (no
+   JavaScript). Sites with JS-rendered sliders/carousels/galleries (common on WordPress,
+   e.g. "revslider" style plugins) will show as hero/gallery "placeholder" or missing in
+   <site_snapshot> even though real photos are visible in a real browser. If <site_snapshot>
+   reports hero unavailable/placeholder, or fewer than 2 real gallery photos, before falling
+   back to a gradient or a thin gallery:
+     a. browser_navigate the live site and check its nav/footer for a "Gallery", "Portfolio",
+        "Work", "Projects", or similar page, and visit it.
+     b. Use browser_evaluate to run something like
+        `[...document.querySelectorAll('img')].map(i => i.currentSrc || i.src).filter(Boolean)`
+        (or browser_network_requests) to get the ACTUAL image URLs the browser loaded —
+        this catches JS-rendered images the static scraper missed.
+     c. browser_take_screenshot to visually confirm a candidate URL is a real, relevant
+        photo (not a logo/icon/unrelated stock graphic) before using it.
+     d. Call mockup_fetch_image(url, slug) for each good URL you find (up to the number of
+        real photos you actually need) — it downloads the file locally and tells you if it
+        rejected the image as too small/placeholder. Use the returned local_path as a
+        hero_path/gallery_paths entry in mockup_copy_assets.
+   Only fall back to a gradient hero / a short-or-empty gallery (per rule (f) below) if this
+   extra Playwright pass genuinely finds nothing better — don't skip this step just because
+   <site_snapshot> came back thin; that's exactly the case it's for.
 3. Decide template based on business_type AND visual aesthetic from step 2:
    - photography / event_planning → 'creative' (Playfair Display, dark, full-bleed, gallery-first)
    - plumbing / electrical / construction / cleaning / automotive → 'trades' (Oswald, bold, trust signals)
@@ -256,7 +277,12 @@ Workflow (use the tools in order, max {MAX_ITERATIONS} build iterations):
    CHECK the returned image_audit block. If hero_is_placeholder=true AND <site_snapshot> contains
    a valid hero_local_path, call mockup_copy_assets again with that corrected hero_path.
 8. mockup_build("{slug}")
-9. mockup_deploy("{slug}")
+9. mockup_deploy("{slug}") — returns BOTH `pages_url` (raw *.pages.dev, Cloudflare's
+   internal domain) and `demo_url` (the branded demo-<slug>.clientcompass.co.za domain).
+   From here on, "<demo_url>" in this prompt means the `demo_url` field specifically —
+   ALWAYS use demo_url, NEVER pages_url, in mockup_verify, mockup_screenshot,
+   mockup_write_approval, and your final JSON's "mockup_url" field. pages_url is an
+   internal implementation detail and must never be shown to the operator or lead.
 10. mockup_verify(<demo_url>, "{lead.business_type or 'general'}")
     If image_audit shows placeholder_count > 0, treat as an issue requiring iteration.
 11. MANDATORY VISUAL REVIEW — mockup_write_approval is blocked until this step
@@ -279,7 +305,10 @@ Workflow (use the tools in order, max {MAX_ITERATIONS} build iterations):
       events) — not logos, icons, or generic stock/marketing graphics.
     - Gallery images are actually different from each other — if two or more tiles
       look like the exact same photo (even cropped differently), that means you
-      duplicated a src path; fix the gallery array per COPY RULE (f) above.
+      duplicated a src path; fix the gallery array per COPY RULE (f) above. If you
+      only had 0-1 real photos from <site_snapshot> and haven't yet tried the
+      Playwright + mockup_fetch_image fallback from step 2, do that now before
+      settling for a short/empty gallery.
     - Logo placement and cropping — no wide banner logos squeezed/cropped into a
       narrow slot (the exact bug this step exists to catch).
     - Colour palette feels consistent with the lead's brand.
@@ -297,9 +326,10 @@ Workflow (use the tools in order, max {MAX_ITERATIONS} build iterations):
     If you exhaust iterations with an unresolved visual issue, say so plainly in your
     final rationale — do not silently ship a mockup you know looks wrong.
 13. When verify passes AND the mockup_screenshot review looks right, OR iterations are
-    exhausted: mockup_write_approval(lead_id, mockup_url, recommendation)
+    exhausted: mockup_write_approval(lead_id, demo_url, recommendation) — pass the
+    clientcompass.co.za demo_url from step 9, not pages_url.
 
-Return a final JSON: {{"status": "ok"|"failed", "mockup_url": "...", "iterations": N, "rationale": "..."}}
+Return a final JSON: {{"status": "ok"|"failed", "mockup_url": "<the demo_url from step 9, e.g. https://demo-{slug}.clientcompass.co.za, NEVER a *.pages.dev URL>", "iterations": N, "rationale": "..."}}
 
 Important constraints:
 - Token discipline: read files with offset/limit. Never read node_modules.
@@ -422,24 +452,36 @@ Important constraints:
         raise
 
 
+_CLIENTCOMPASS_URL_RE = re.compile(r"https://demo-[a-z0-9-]+\.clientcompass\.co\.za")
+_PAGES_DEV_URL_RE = re.compile(r"https://[a-z0-9-]+\.pages\.dev")
+
+
 def _extract_mockup_url(final: str | None, raw: str) -> str | None:
     """Find the mockup URL from the LLM's output.
 
-    Looks for:
-      1. JSON {"mockup_url": "..."} in the final summary
-      2. demo-<slug>.clientcompass.co.za pattern anywhere in raw output
+    The LLM is instructed to always report the branded demo_url
+    (demo-<slug>.clientcompass.co.za) from mockup_deploy, never the raw
+    pages_url (*.pages.dev) — but instructions aren't a guarantee (this has
+    shipped before: Ultra Event Technical Solutions, 2026-08-17). So: if a
+    clientcompass.co.za URL appears ANYWHERE in the transcript (it always
+    will, since mockup_deploy's own tool output includes it even when the
+    LLM's final JSON doesn't), prefer that over whatever the LLM's JSON says
+    — even if the JSON parses fine and contains a (wrong) pages.dev URL.
     """
+    clientcompass_match = _CLIENTCOMPASS_URL_RE.search(raw)
+    if clientcompass_match:
+        return clientcompass_match.group(0)
+
     if final:
         try:
             data = json.loads(final)
             if isinstance(data, dict) and data.get("mockup_url"):
-                return data["mockup_url"]
+                url = data["mockup_url"]
+                if _PAGES_DEV_URL_RE.match(url):
+                    log.warning("mockup_url_is_raw_pages_dev", url=url)
+                return url
         except (json.JSONDecodeError, ValueError):
             pass
-    # Fallback: regex search in raw output
-    match = re.search(r"https://demo-[a-z0-9-]+\.clientcompass\.co\.za", raw)
-    if match:
-        return match.group(0)
     return None
 
 

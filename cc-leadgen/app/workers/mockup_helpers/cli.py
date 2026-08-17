@@ -10,6 +10,7 @@ from . import build as build_mod
 from . import deploy as deploy_mod
 from . import load_lead as lead_mod
 from . import screenshot as screenshot_mod
+from . import site_snapshot as site_snapshot_mod
 from . import verify as verify_mod
 from . import write_approval as approval_mod
 from . import write_config as config_mod
@@ -126,6 +127,20 @@ def cmd_screenshot(args: argparse.Namespace) -> int:
         return _err(f"screenshot failed: {e}", url=args.url)
 
 
+def cmd_fetch_image(args: argparse.Namespace) -> int:
+    try:
+        result = site_snapshot_mod.fetch_extra_image(
+            url=args.url,
+            slug=args.slug,
+            index=args.index,
+        )
+        if not result.get("ok"):
+            return _err(result.get("error", "fetch_image failed"), url=args.url, slug=args.slug)
+        return _ok(result)
+    except Exception as e:
+        return _err(f"fetch_image failed: {e}", url=args.url, slug=args.slug)
+
+
 def cmd_write_approval(args: argparse.Namespace) -> int:
     try:
         rec = json.loads(args.recommendation_json) if args.recommendation_json else {}
@@ -201,6 +216,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("url")
     p.add_argument("--viewport", choices=["desktop", "mobile"], default="desktop")
 
+    # fetch_image
+    p = sub.add_parser(
+        "fetch_image",
+        help="Download a single image URL (found via Playwright browsing) into the asset cache",
+    )
+    p.add_argument("url")
+    p.add_argument("slug")
+    p.add_argument("--index", type=int, default=1, help="Distinguishes multiple fetched images")
+
     # write_approval
     p = sub.add_parser("write_approval", help="Write approval row to prod DB")
     p.add_argument("lead_id")
@@ -217,6 +241,7 @@ def main(argv: list[str] | None = None) -> int:
         "deploy": cmd_deploy,
         "verify": cmd_verify,
         "screenshot": cmd_screenshot,
+        "fetch_image": cmd_fetch_image,
         "write_approval": cmd_write_approval,
     }
     return handlers[args.cmd](args)

@@ -14,6 +14,7 @@
  *   mockup_deploy           — wrangler pages deploy + DNS A record
  *   mockup_verify           — programmatic checks (HTTP, images, trade-copy regression)
  *   mockup_screenshot       — full-page screenshot of a live URL for visual (vision) review
+ *   mockup_fetch_image      — download an image URL found via Playwright browsing into the asset pool
  *   mockup_write_approval   — insert approval row in prod admin DB
  *
  * Usage:
@@ -331,6 +332,47 @@ export default function mockupBuilderExtension(pi: ExtensionAPI) {
 				width: result.width,
 				height: result.height,
 			});
+		},
+	});
+
+	// ─── mockup_fetch_image ─────────────────────────────────────────────
+	// site_snapshot() (run before this Pi session starts) only sees a static
+	// HTML fetch of the lead's homepage — no JS execution — so sites with
+	// JS-rendered sliders/galleries (e.g. WordPress "revslider") often only
+	// yield placeholder images to it even though real photos are visible to
+	// a real browser. This tool closes that gap: after using Playwright MCP
+	// to browse the live site (browser_navigate to any /gallery, /portfolio,
+	// /work page found in the nav; browser_evaluate running
+	// `[...document.querySelectorAll('img')].map(i => i.src)` or
+	// browser_network_requests to find real image URLs a static fetch
+	// missed), call this with the actual image URL to download it into the
+	// local asset pool. The returned local_path can then be passed into
+	// mockup_copy_assets' hero_path/gallery_paths.
+	pi.registerTool({
+		name: "mockup_fetch_image",
+		label: "Fetch Extra Image",
+		description:
+			"Download a single image URL you found by browsing the lead's live site with " +
+			"Playwright MCP (e.g. via browser_evaluate reading <img> src attributes, or " +
+			"browser_network_requests) into the local asset cache, for use as a hero/gallery " +
+			"image. Use this when <site_snapshot> came up short on real photos (e.g. only " +
+			"placeholder/dummy images were found) — that usually means the real photos are " +
+			"loaded by JavaScript (sliders, carousels) that the static pre-scrape can't see, " +
+			"but Playwright can. Rejects the download if it's too small or looks like a solid-" +
+			"colour placeholder rather than a real photo — try a different URL if so.",
+		parameters: Type.Object({
+			url: Type.String({ description: "Absolute image URL found while browsing with Playwright" }),
+			slug: Type.String(),
+			index: Type.Optional(Type.Integer({ description: "Distinguishes multiple fetched images, default 1" })),
+		}),
+		async execute(_id, params) {
+			const args = [params.url, params.slug];
+			if (params.index !== undefined) args.push(`--index=${params.index}`);
+			const result = await callHelper("fetch_image", args, DEFAULT_TIMEOUT_S);
+			const text = result.ok
+				? `Fetched ${params.url} → ${result.local_path} (${result.width}x${result.height}, ${result.bytes} bytes)`
+				: `Error: ${result.error}`;
+			return toolResult(text, result);
 		},
 	});
 
