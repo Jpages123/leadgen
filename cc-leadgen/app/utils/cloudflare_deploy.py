@@ -268,12 +268,67 @@ def deploy_mockup(slug: str, dist_dir: str) -> str:
     settings = get_settings()
     cf_token = settings.cloudflare_api_token
 
-    project_name = f"{slug}-demo"
+    # Cloudflare Pages project names are capped at 58 chars and DNS labels at 63.
+    # For long slugs, derive a short deterministic slug (prefix + sha1 hash) that
+    # fits in both, so the demo-router Worker (which reconstructs project_name
+    # from the subdomain by stripping 'demo-' and appending '-demo') still works.
+    import hashlib
+
+    suffix = "demo"
+    max_pages_name = 58  # CF Pages project name limit
+    max_dns_label = 60   # safety margin under 63-char DNS label limit
+
+    short_slug = slug
+    if len(f"{short_slug}-{suffix}") > max_pages_name or len(f"demo-{short_slug}") > max_dns_label:
+        h = hashlib.sha1(slug.encode("utf-8")).hexdigest()[:7]
+        # Reserve room for '-' + hash on the project name side (longest constraint)
+        keep = max_pages_name - len(suffix) - 1 - len(h) - 1  # 1 for '-'
+        short_slug = slug[:keep].rstrip("-") + "-" + h
+
+    project_name = f"{short_slug}-{suffix}"
+    dns_sub = f"demo-{short_slug}"
+    demo_url = f"https://{dns_sub}.clientcompass.co.za"
 
     pages_url = deploy_pages(dist_dir=dist_dir, project_name=project_name, cf_token=cf_token)
-    log.info("mockup_pages_live", slug=slug, pages_url=pages_url)
+    log.info("mockup_pages_live", slug=slug, project=project_name, pages_url=pages_url)
 
-    demo_url = create_dns_record(slug=slug, cf_token=cf_token)
+    _create_dns_record_for_project(dns_sub=dns_sub, project_name=project_name, cf_token=cf_token)
     log.info("mockup_dns_live", slug=slug, demo_url=demo_url)
 
     return demo_url
+
+
+def _create_dns_record_for_project(dns_sub: str, project_name: str, cf_token: str) -> None:
+    """Create DNS A record pointing the demo subdomain at the pages project."""
+    record_name = dns_sub
+    headers = {
+        "Authorization": f"Bearer {cf_token}",
+        "Content-Type": "application/json",
+    }
+    with httpx.Client(timeout=15) as client:
+        resp = client.get(
+            f"{_CF_API_BASE}/zones/{_CC_ZONE_ID}/dns_records",
+            headers=headers,
+            params={"name": f"{record_name}.clientcompass.co.za", "type": "A"},
+        )
+        resp.raise_for_status()
+        existing = resp.json().get("result", [])
+        if existing:
+            log.info("dns_record_exists", name=record_name)
+            return
+        create_resp = client.post(
+            f"{_CF_API_BASE}/zones/{_CC_ZONE_ID}/dns_records",
+            headers=headers,
+            json={
+                "type": "A",
+                "name": record_name,
+                "content": "192.0.2.1",
+                "proxied": True,
+                "ttl": 1,
+            },
+        )
+        create_resp.raise_for_status()
+        result = create_resp.json()
+        if not result.get("success"):
+            raise RuntimeError(f"DNS create failed: {result.get('errors')}")
+        log.info("dns_record_created", name=record_name)

@@ -11,6 +11,7 @@ from . import deploy as deploy_mod
 from . import load_lead as lead_mod
 from . import screenshot as screenshot_mod
 from . import site_snapshot as site_snapshot_mod
+from . import stock_images as stock_images_mod
 from . import verify as verify_mod
 from . import write_approval as approval_mod
 from . import write_config as config_mod
@@ -141,6 +142,21 @@ def cmd_fetch_image(args: argparse.Namespace) -> int:
         return _err(f"fetch_image failed: {e}", url=args.url, slug=args.slug)
 
 
+def cmd_search_stock(args: argparse.Namespace) -> int:
+    try:
+        result = stock_images_mod.search_stock_images_json(
+            query=args.query,
+            slug=args.slug,
+            orientation=args.orientation,
+            per_page=args.per_page,
+        )
+        if not result.get("ok"):
+            return _err(result.get("error", "search_stock failed"), query=args.query, slug=args.slug)
+        return _ok(result)
+    except Exception as e:
+        return _err(f"search_stock failed: {e}", query=args.query, slug=args.slug)
+
+
 def cmd_write_approval(args: argparse.Namespace) -> int:
     try:
         rec = json.loads(args.recommendation_json) if args.recommendation_json else {}
@@ -225,6 +241,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("slug")
     p.add_argument("--index", type=int, default=1, help="Distinguishes multiple fetched images")
 
+    # search_stock
+    p = sub.add_parser(
+        "search_stock",
+        help="Search Pexels for stock photo candidates and download the top results",
+    )
+    p.add_argument("query")
+    p.add_argument("slug")
+    p.add_argument("--orientation", choices=["landscape", "portrait", "square"], default="landscape")
+    p.add_argument("--per-page", type=int, default=5)
+
     # write_approval
     p = sub.add_parser("write_approval", help="Write approval row to prod DB")
     p.add_argument("lead_id")
@@ -242,6 +268,7 @@ def main(argv: list[str] | None = None) -> int:
         "verify": cmd_verify,
         "screenshot": cmd_screenshot,
         "fetch_image": cmd_fetch_image,
+        "search_stock": cmd_search_stock,
         "write_approval": cmd_write_approval,
     }
     return handlers[args.cmd](args)

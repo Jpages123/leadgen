@@ -47,6 +47,12 @@ async def send_alert(
         return False
 
 
+def send_alert_sync(content: str | None = None, embed: DiscordEmbed | None = None) -> bool:
+    """Call ``send_alert`` from a sync context (e.g. a Celery task)."""
+    import asyncio
+    return asyncio.run(send_alert(content=content, embed=embed))
+
+
 def send_digest_sync(
     discovered: int,
     outreach_sent: int,

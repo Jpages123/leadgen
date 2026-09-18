@@ -15,8 +15,9 @@ class LeadEvent(Base, UUIDPrimaryKey, Timestamps):
 
     lead_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("leads.id"), nullable=False, index=True)
     event_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    # event_types: email_sent, email_opened, email_clicked, replied, opted_out,
-    #              status_change, score_updated, enriched, synced_to_crm, whatsapp_sent
+    # event_types: email_sent, follow_up_sent (step 2/3), email_opened, email_clicked,
+    #              replied, opted_out, status_change, score_updated, enriched,
+    #              synced_to_crm, whatsapp_sent
 
     payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     # Stores relevant data: e.g. {"old_status": "discovered", "new_status": "enriched"}

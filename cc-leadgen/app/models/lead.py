@@ -58,6 +58,8 @@ class Lead(Base, UUIDPrimaryKey, Timestamps):
     # discovered → enriched → outreach_queued
     # → contacted → responded → interested
     # → converted | not_interested | opted_out | invalid | competitor_customer
+    # 'no_response' is terminal too: set by app.workers.outreach.send_follow_up_sequence
+    # when a web-revamp lead's step-3 (final) follow-up goes unanswered.
 
     # Outreach tracking
     outreach_channel: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # email, whatsapp, both
@@ -73,6 +75,11 @@ class Lead(Base, UUIDPrimaryKey, Timestamps):
     discovered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_contacted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     next_follow_up_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Cross-worker claim used by send_follow_up_sequence — set to NOW()+ttl
+    # immediately before each SMTP send via an atomic UPDATE. See
+    # app/workers/outreach.py::_claim_lead. Migration 012.
+    claimed_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
     # Web audit fields (migration 002)
     website_platform: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
@@ -97,6 +104,12 @@ class Lead(Base, UUIDPrimaryKey, Timestamps):
     mockup_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     mockup_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     mockup_status: Mapped[str] = mapped_column(String(30), nullable=False, default="none")
+
+    # Auto-retry counter (migration 011). Incremented by retry_single_mockup
+    # each time it dispatches a fresh generate_mockup for a failed lead.
+    # Capped at mockup_max_auto_retries (default 3) before the lead is left
+    # as 'failed' for the operator to handle manually.
+    mockup_retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     # Operator-curated flag for the SELECT page (migration 008).
     # When ANY lead has this set TRUE, /admin/mockup-lead-selection shows
@@ -153,6 +166,17 @@ class Lead(Base, UUIDPrimaryKey, Timestamps):
     mockup_eligible_pending_contact: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
+
+    # Enrichment crawl tracking (migration 010). Stamped by
+    # app.workers.enrichment.enrich_website_crawl on every attempt
+    # (success or failure) so the batch query can advance past leads
+    # whose site is unreachable instead of re-fetching the same dead
+    # URLs on every beat tick. enrich_crawl_failed lets the query retry
+    # failures after a cooldown instead of never touching them again.
+    enrich_crawl_attempted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    enrich_crawl_failed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # Relationships
     # Relationships

@@ -1,6 +1,13 @@
-"""Webhook routes — WhatsApp inbound + unsubscribe."""
+"""Webhook routes — WhatsApp inbound + unsubscribe.
+
+Not directly internet-facing: cc-leadgen.clientcompass.co.za has no DNS
+record / tunnel. login-portal (login-portal/routes/admin.js, GET
+/unsubscribe) proxies to this over Tailscale — same pattern it already
+uses for dispatchSendDraft / the PDF proxy.
+"""
 from __future__ import annotations
 
+import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.utils.logger import get_logger
@@ -47,11 +54,16 @@ async def unsubscribe(token: str = Query(...)) -> dict:
 
     lead_id = payload["lead_id"]
     async with session_scope() as session:
+        # Guard against a validly-signed token whose lead no longer exists
+        # (deleted/purged) — LeadEvent has an FK on lead_id, so inserting
+        # unconditionally would 500 instead of just no-op'ing.
+        exists = await session.scalar(sa.select(Lead.id).where(Lead.id == lead_id))
+        if not exists:
+            log.warning("unsubscribe_lead_not_found", lead_id=lead_id)
+            raise HTTPException(status_code=404, detail="Lead not found")
+
         await session.execute(
-            __import__("sqlalchemy")
-            .update(Lead)
-            .where(Lead.id == lead_id)
-            .values(status="opted_out")
+            sa.update(Lead).where(Lead.id == lead_id).values(status="opted_out")
         )
         session.add(LeadEvent(
             lead_id=lead_id,

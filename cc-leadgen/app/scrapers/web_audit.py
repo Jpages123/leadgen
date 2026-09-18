@@ -732,7 +732,46 @@ def _guess_extension(url: str, content_type: str = "") -> str:
     return ".jpg"
 
 
-_GALLERY_PATHS = ["/gallery", "/work", "/portfolio", "/our-work", "/projects"]
+
+
+def _extract_services_text(page) -> "str | None":
+    """Extract service-related copy from the page body for LLM hints.
+
+    Scrapes text from services/about sections. Returns up to 500 chars.
+    """
+    try:
+        texts = page.evaluate(
+            """() => {
+            var seen = {};
+            var collected = [];
+            var sels = [
+                '#services h3','#services h4','#services li','#services p',
+                '.services h3','.services h4','.services li',
+                '[class*="service"] h3','[class*="service"] h4','[class*="service"] li',
+                '#about p','.about p','[class*="about"] p',
+                'section h2','main h2','main h3'
+            ];
+            for (var i=0;i<sels.length;i++){
+                try {
+                    var els=document.querySelectorAll(sels[i]);
+                    for (var j=0;j<els.length;j++){
+                        var t=els[j].innerText?els[j].innerText.trim():'';
+                        if(t&&t.length>3&&t.length<120&&!seen[t]){seen[t]=1;collected.push(t);}
+                    }
+                } catch(e){}
+                if(collected.length>=20) break;
+            }
+            return collected.slice(0,20);
+        }"""
+        )
+        if texts:
+            joined = ", ".join(texts)
+            return joined[:500]
+    except Exception:
+        pass
+    return None
+
+_GALLERY_PATHS = ["/gallery", "/work", "/portfolio", "/our-work", "/projects", "/photos", "/images", "/showcase", "/portfolio-items", "/work-gallery"]
 
 
 def _probe_gallery_pages(
@@ -757,6 +796,12 @@ def _probe_gallery_pages(
             if not resp or resp.status >= 400:
                 continue
             page.wait_for_timeout(800)
+            # Scroll to trigger lazy-loaded images in JS-rendered galleries
+            try:
+                page.evaluate('() => window.scrollTo(0, document.body.scrollHeight)')
+                page.wait_for_timeout(600)
+            except Exception:
+                pass
             urls = _extract_gallery_urls(page, url, max_n=4)
             for u in urls:
                 ext = _guess_extension(u)
@@ -792,7 +837,11 @@ def audit_website(
     slug = _slug_from_url(url)
 
     if screenshot_dir is None:
-        screenshot_dir = os.path.join(tempfile.gettempdir(), "cc_audits")
+        # Default to the durable audit-assets directory (see Session 9 in
+        # docs/WEB_REVAMP_ENGINE.md). Old behaviour was /tmp/cc_audits,
+        # which disappeared between audit and mockup build.
+        from app.utils.audit_assets import audit_assets_dir
+        screenshot_dir = str(audit_assets_dir())
     Path(screenshot_dir).mkdir(parents=True, exist_ok=True)
 
     screenshot_path = os.path.join(screenshot_dir, f"{slug}.jpg")
@@ -875,6 +924,12 @@ def audit_website(
             try:
                 meta = page.query_selector('meta[name="description"]')
                 result.meta_description = meta.get_attribute("content") if meta else None
+            except Exception:
+                pass
+
+            # ── Services text ─────────────────────────────────────────
+            try:
+                result.services_text = _extract_services_text(page)
             except Exception:
                 pass
 

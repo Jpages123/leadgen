@@ -240,15 +240,23 @@
 </div>
 
 {% if mockup_url %}
-<!-- Mockup link + QR code — closes the loop between this PDF and the live
-     mockup. Visible on screen AND scannable from a printed copy. -->
+<!-- Preview link + QR code — closes the loop between this PDF and the live
+     preview. Visible on screen AND scannable from a printed copy. -->
 <div class="section">
-  <div class="section-title">Your free mockup is ready</div>
+  <div class="section-title">Your free preview is ready</div>
   <div class="mockup-link-row">
     <div class="mockup-link-text">
       <p>
-        We&rsquo;ve already built a free mockup of what your new website could look like &mdash;
-        fast, mobile-first, no Wix watermark, owner-editable:
+        We&rsquo;ve already built a free preview of what your new website could look like &mdash;
+        fast on phones,
+        {% if website_platform == 'wix' %}no Wix watermark,
+        {% elif website_platform == 'wordpress_divi' %}no Divi plugin bloat,
+        {% elif website_platform == 'wordpress_elementor' %}no Elementor lock-in,
+        {% elif website_platform == 'joomla' %}no Joomla maintenance burden,
+        {% elif website_platform == 'static_html' %}no static HTML to maintain,
+        {% else %}no monthly platform fees,
+        {% endif %}
+        owner-editable:
       </p>
       <p class="mockup-url">
         <a href="{{ mockup_url }}" target="_blank">{{ mockup_url }}</a>
@@ -259,7 +267,7 @@
     </div>
     {% if mockup_qr_data_uri %}
     <div class="mockup-qr">
-      <img src="{{ mockup_qr_data_uri }}" alt="QR code linking to your live mockup" />
+      <img src="{{ mockup_qr_data_uri }}" alt="QR code linking to your live preview" />
       <div class="mockup-qr-caption">Scan to view</div>
     </div>
     {% endif %}
@@ -272,12 +280,25 @@
 <div class="cta-footer">
   <h3>Ready for a modern website that works for your business?</h3>
   <p>
-    Client Compass builds fast, mobile-first websites for South African trades and service businesses.
+    Client Compass builds fast websites that load quickly on phones — for South African trades and service businesses.
     No subscriptions to Wix or WordPress. You own your site outright.
     Most projects delivered in 2&ndash;3 weeks &mdash; we&rsquo;ll confirm a timeline in your proposal.
   </p>
+  <p>
+    <strong>The rebuild price:</strong> <strong>R5,000 once-off</strong> — a brand new website is R8,000,
+    but if you&rsquo;ve already got a site, a rebuild is the smarter move (I reuse your domain, content,
+    photos and branding, so you only pay for the part that actually needs changing). Most rebuilds
+    are done within 7 working days. Plus R395/month for hosting and a monthly check-up.
+    All prices incl. VAT. Pay via PayFast (instant EFT, card or SnapScan) when you accept the proposal.
+    Only 3 website rebuilds each month.
+  </p>
+  <p style="font-size:11px;color:#64748b;">
+    Fast on 3G too &mdash; loads quickly without eating your customers&rsquo; data.
+  </p>
   <div class="contact">
-    info@clientcompass.co.za &bull; +27 74 094 0550 &bull; clientcompass.co.za
+    info@clientcompass.co.za &bull; +27 74 094 0550 &bull; clientcompass.co.za &bull; Cape Town, Western Cape
+    {% if cipc_reg_number %} &bull; Reg. No. {{ cipc_reg_number }}{% endif %}
+    {% if vat_number %} &bull; VAT No. {{ vat_number }}{% endif %}
   </div>
 </div>
 

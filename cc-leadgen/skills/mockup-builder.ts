@@ -15,6 +15,9 @@
  *   mockup_verify           — programmatic checks (HTTP, images, trade-copy regression)
  *   mockup_screenshot       — full-page screenshot of a live URL for visual (vision) review
  *   mockup_fetch_image      — download an image URL found via Playwright browsing into the asset pool
+ *   mockup_search_stock_images — search Pexels for stock photo candidates when the lead's own
+ *                                site (scraped + Playwright fallback) doesn't have enough real
+ *                                imagery; returns thumbnails for visual review, same as mockup_screenshot
  *   mockup_write_approval   — insert approval row in prod admin DB
  *
  * Usage:
@@ -35,6 +38,14 @@
  *     original site for aesthetic reference, but mockup_screenshot — not
  *     Playwright's own screenshot tool — is what satisfies the vision gate, since
  *     it's the one guaranteed to return the image as in-context model input.
+ *   - Image sourcing fallback ladder (Phase P, docs/PHASE_P_PLAN.md): (1) <site_snapshot>
+ *     static scrape, (2) Playwright + mockup_fetch_image for JS-rendered photos, (3)
+ *     mockup_search_stock_images (Pexels) when the lead's own site genuinely lacks enough
+ *     real imagery, (4) Pillow gradient/solid-colour placeholder as the true last resort.
+ *     If mockup_screenshot's mandatory visual review flags a bad image (wrong crop,
+ *     irrelevant photo, duplicate gallery tile) and it's fixable by swapping the image,
+ *     call mockup_search_stock_images and rebuild rather than shipping it — you have
+ *     iteration budget for this.
  *   - If you need to modify config between iterations, use pi's read/edit tools
  *     on /tmp/cc_mockups/<slug>/src/config/{client,brand}.ts, then call
  *     mockup_build + mockup_deploy + mockup_verify again.
@@ -43,7 +54,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -58,6 +69,9 @@ const HELPER_MODULE = "app.workers.mockup_helpers.cli";
 const DEFAULT_TIMEOUT_S = 300;
 const BUILD_TIMEOUT_S = 240;
 const DEPLOY_TIMEOUT_S = 120;
+// Guardrail on context size — a Pexels search can return up to 10 candidates,
+// but we only need enough for Pi to visually pick a winner from.
+const MAX_STOCK_CANDIDATES_RETURNED = 6;
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -125,6 +139,20 @@ function toolResultWithImage(
 		content: [
 			{ type: "text" as const, text },
 			{ type: "image" as const, data: imageBase64, mimeType },
+		],
+		details,
+	};
+}
+
+function toolResultWithImages(
+	text: string,
+	images: { data: string; mimeType: string }[],
+	details: Record<string, unknown> = {},
+) {
+	return {
+		content: [
+			{ type: "text" as const, text },
+			...images.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType })),
 		],
 		details,
 	};
@@ -215,7 +243,15 @@ export default function mockupBuilderExtension(pi: ExtensionAPI) {
 		name: "mockup_copy_assets",
 		label: "Copy Assets",
 		description:
-			"Copy scraped images (logo, hero, gallery) from the audit into the template's public/images/ dir. Falls back to Pillow-generated placeholders if any source is missing or zero-byte. Always produces logo.jpg, hero.jpg, about.jpg, gallery/1-4.jpg.",
+			"Copy scraped images (logo, hero, gallery) from the audit into the template's public/images/ dir. Falls back to Pillow-generated placeholders if any source is missing or zero-byte. Always produces logo.jpg, hero.jpg, about.jpg, gallery/1-4.jpg. " +
+			"IMPORTANT: always pass candidate_pool with EVERY real image path you've gathered for this lead " +
+			"(all <site_snapshot> local paths, every mockup_fetch_image download, every " +
+			"mockup_search_stock_images pick) — not just your per-slot hints. logo_path/hero_path/" +
+			"gallery_paths are hints (which slot you'd like each one in), but candidate_pool lets the " +
+			"scorer independently pick the best-fit, DISTINCT image per slot instead of reusing your " +
+			"hero pick for about (or gallery) too. Omitting candidate_pool silently falls back to legacy " +
+			"behaviour, which WILL duplicate the hero image into the about slot whenever about has no " +
+			"pick of its own — a known bug users have flagged before.",
 		parameters: Type.Object({
 			slug: Type.String(),
 			logo_path: Type.Optional(Type.String({ description: "Absolute path to scraped logo image" })),
@@ -223,11 +259,15 @@ export default function mockupBuilderExtension(pi: ExtensionAPI) {
 			gallery_paths: Type.Optional(Type.Array(Type.String(), {
 				description: "Array of absolute paths to scraped gallery images (max 4 used)",
 			})),
+			candidate_pool: Type.Optional(Type.Array(Type.String(), {
+				description: "ALL real image paths gathered for this lead (site_snapshot images, mockup_fetch_image downloads, mockup_search_stock_images picks). Strongly recommended on every call — enables distinct-per-slot scoring instead of hero/about duplication.",
+			})),
 			business_name: Type.String({ description: "Used for text-logo fallback" }),
 			accent_color: Type.String({ description: "Hex color like #1a4d5c, used for placeholders" }),
 		}),
 		async execute(_id, params) {
 			const galleryCsv = (params.gallery_paths ?? []).slice(0, 4).join(",");
+			const poolCsv = (params.candidate_pool ?? []).join(",");
 			const args = [
 				params.slug,
 				`--business-name=${params.business_name}`,
@@ -236,9 +276,11 @@ export default function mockupBuilderExtension(pi: ExtensionAPI) {
 			if (params.logo_path) args.push(`--logo=${params.logo_path}`);
 			if (params.hero_path) args.push(`--hero=${params.hero_path}`);
 			if (galleryCsv) args.push(`--gallery=${galleryCsv}`);
+			if (poolCsv) args.push(`--pool=${poolCsv}`);
 			const result = await callHelper("copy_assets", args);
 			const text = result.ok
-				? `Assets copied: logo ${result.logo_bytes}B, hero ${result.hero_bytes}B, about ${result.about_bytes}B, ${result.gallery_count} gallery images`
+				? `Assets copied: logo ${result.logo_bytes}B, hero ${result.hero_bytes}B, about ${result.about_bytes}B, ${result.gallery_count} gallery images` +
+					(poolCsv ? "" : " [WARNING: no candidate_pool passed — about/gallery may duplicate hero]")
 				: `Error: ${result.error}`;
 			return toolResult(text, result);
 		},
@@ -376,6 +418,77 @@ export default function mockupBuilderExtension(pi: ExtensionAPI) {
 		},
 	});
 
+	// ─── mockup_search_stock_images ─────────────────────────────────────
+	// Phase P (docs/PHASE_P_PLAN.md): closes the gap between "Playwright +
+	// mockup_fetch_image found nothing" and "settle for a Pillow gradient".
+	// Searches Pexels (free, watermark-free, no attribution required) and
+	// returns the downloaded candidates as images in this tool result — the
+	// same mechanism mockup_screenshot uses — so Pi's own vision (MiniMax M3
+	// is natively multimodal) judges relevance/aesthetic fit directly, no
+	// separate model call needed. The winning candidate's local_path is then
+	// just an ordinary hint into mockup_copy_assets, same as an LLM-nominated
+	// scraped image.
+	pi.registerTool({
+		name: "mockup_search_stock_images",
+		label: "Search Stock Images",
+		description:
+			"Search Pexels for stock photo candidates and return them as images for visual " +
+			"review, the same way mockup_screenshot returns a screenshot. Use this when " +
+			"<site_snapshot> AND the Playwright + mockup_fetch_image fallback (see the image " +
+			"sourcing steps earlier in this prompt) both come up short on real, on-topic photos " +
+			"for the hero, about, or gallery slots — i.e. the lead's own site genuinely doesn't " +
+			"have enough usable imagery. NOT for the logo slot — there is no such thing as a " +
+			"stock logo; use the text-logo fallback (omit logo_path in mockup_copy_assets) " +
+			"instead. Build the query from the business type plus vertical style words (e.g. " +
+			"'plumber south africa professional photo', or 'elegant wedding marquee evening " +
+			"lights' for a creative/event vertical). Look at the returned thumbnails and pick " +
+			"AT MOST ONE winner — reject anything that isn't a real, on-topic, unwatermarked " +
+			"photo. If nothing fits, call again with a refined query before falling back to a " +
+			"gradient/solid-colour placeholder.",
+		parameters: Type.Object({
+			query: Type.String({ description: "Search query, e.g. 'plumber south africa professional photo'" }),
+			slug: Type.String(),
+			slot_hint: Type.Union(
+				[Type.Literal("hero"), Type.Literal("about"), Type.Literal("gallery")],
+				{ description: "Which slot this search is for. Logo is not supported." },
+			),
+			orientation: Type.Optional(
+				Type.Union([Type.Literal("landscape"), Type.Literal("portrait"), Type.Literal("square")], {
+					description: "Defaults to landscape. Use 'square' for gallery tiles if you want a tighter grid fit.",
+				}),
+			),
+		}),
+		async execute(_id, params) {
+			if ((params.slot_hint as string) === "logo") {
+				return toolResult(
+					"Error: mockup_search_stock_images does not support the logo slot — a stock " +
+						"photo is never an appropriate logo. Omit logo_path in mockup_copy_assets to " +
+						"use the text-logo fallback instead.",
+					{ ok: false, error: "logo_slot_not_supported" },
+				);
+			}
+			const args = [params.query, params.slug];
+			if (params.orientation) args.push(`--orientation=${params.orientation}`);
+			const result = await callHelper("search_stock", args, DEFAULT_TIMEOUT_S);
+			if (!result.ok || !Array.isArray(result.candidates)) {
+				return toolResult(`Error: ${result.error ?? "stock search returned no candidates"}`, result);
+			}
+			const candidates = (result.candidates as any[]).slice(0, MAX_STOCK_CANDIDATES_RETURNED);
+			const images = candidates.map((c) => ({
+				data: readFileSync(c.local_path).toString("base64"),
+				mimeType: "image/jpeg",
+			}));
+			const text =
+				`Found ${candidates.length} Pexels candidate(s) for "${params.query}" (${params.slot_hint} slot). ` +
+				"Review the images above and pick at most one winner's local_path to use as a hint " +
+				"in mockup_copy_assets, or call again with a refined query if none fit. Candidates:\n" +
+				candidates
+					.map((c, i) => `  [${i}] ${c.local_path} (${c.width}x${c.height}, ${c.bytes}B, by ${c.photographer ?? "unknown"})`)
+					.join("\n");
+			return toolResultWithImages(text, images, result);
+		},
+	});
+
 	// ─── Hard gate: mockup_write_approval requires a prior successful
 	// mockup_screenshot call in this session. Prompt-only instructions have
 	// repeatedly failed to make the LLM actually look before approving
@@ -416,6 +529,11 @@ export default function mockupBuilderExtension(pi: ExtensionAPI) {
 					primary: Type.String(),
 					accent: Type.String(),
 				})),
+				image_audit: Type.Optional(Type.Object({
+					hero_source: Type.Optional(Type.String()),
+					logo_source: Type.Optional(Type.String()),
+					gallery_sources: Type.Optional(Type.Array(Type.String())),
+				}, { additionalProperties: true, description: "From the last mockup_copy_assets call — each source is 'scraped', 'stock', or 'placeholder'. Surfaced in the admin approval UI." })),
 			}, { additionalProperties: true }),
 		}),
 		async execute(_id, params) {

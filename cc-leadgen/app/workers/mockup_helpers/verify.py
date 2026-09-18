@@ -72,18 +72,53 @@ def verify(url: str, vertical: str) -> dict:
     base = f"{parsed.scheme}://{parsed.netloc}"
 
     image_issues = []
+    placeholder_images = []
     for img_path in image_urls[:10]:  # cap at 10
         img_url = base + img_path
         try:
             ir = httpx.get(img_url, timeout=10)
             if ir.status_code != 200 or len(ir.content) < 1024:
                 image_issues.append({"url": img_url, "status": ir.status_code, "bytes": len(ir.content)})
+            else:
+                # L3: placeholder detection on live deployed images
+                try:
+                    from PIL import Image as _PILImage
+                    from io import BytesIO as _BytesIO
+                    img_obj = _PILImage.open(_BytesIO(ir.content)).convert("L")
+                    lo, hi = img_obj.getextrema()
+                    if (hi - lo) < 40:
+                        placeholder_images.append({"url": img_url, "colour_range": hi - lo})
+                except Exception:
+                    pass
         except Exception as e:
             image_issues.append({"url": img_url, "error": str(e)[:80]})
     if image_issues:
         issues.append({"name": "broken_images", "ok": False, "items": image_issues[:5]})
     else:
         checks.append({"name": "all_images_ok", "ok": True, "count": len(image_urls)})
+    if placeholder_images:
+        issues.append({"name": "placeholder_images", "ok": False,
+                        "items": placeholder_images, "recommendation": "replace with real images"})
+    else:
+        checks.append({"name": "no_placeholder_images", "ok": True})
+
+    # 3b. Hero/about duplicate check — flagged 2026-08-31: build.py's legacy
+    # fallback (and any pool-mode edge case where the pool has only one
+    # usable photo) can end up serving the literal same file for both
+    # hero.jpg and about.jpg. Byte-identical hero/about reads as broken to
+    # a lead even though neither individual image failed the checks above.
+    try:
+        hero_bytes = httpx.get(base + "/images/hero.jpg", timeout=10).content
+        about_bytes = httpx.get(base + "/images/about.jpg", timeout=10).content
+        if hero_bytes and about_bytes and hero_bytes == about_bytes:
+            issues.append({
+                "name": "duplicate_hero_about_image", "ok": False,
+                "recommendation": "source a distinct photo for the about slot (mockup_search_stock_images) — do not reuse hero.jpg",
+            })
+        else:
+            checks.append({"name": "hero_about_distinct", "ok": True})
+    except Exception:
+        pass  # non-fatal — image-level checks above already cover reachability
 
     # 4. Trade-copy regression check (only for non-trades verticals)
     is_trades = _is_trades_vertical(vertical)
@@ -118,5 +153,6 @@ def verify(url: str, vertical: str) -> dict:
         "recommendation": recommendation,
         "title": title,
         "h1": h1,
+        "placeholder_image_count": len(placeholder_images),
         "elapsed_ms": int((time.time() - started) * 1000),
     }

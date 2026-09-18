@@ -1,4 +1,11 @@
-"""Response handler tasks — placeholder, filled in Phase 4."""
+"""Response handler tasks.
+
+Superseded by ``app.workers.outreach.check_replies``, which is what the
+Celery beat schedule actually calls (see ``response-poll`` in
+``app.workers.celery_app``). This module is kept only so
+``app.workers.response.tasks.poll_email_replies`` stays callable for any
+external callers, but it just delegates.
+"""
 from __future__ import annotations
 
 from celery import shared_task
@@ -10,6 +17,6 @@ log = get_logger(__name__)
 
 @shared_task(bind=True, name="app.workers.response.tasks.poll_email_replies")
 def poll_email_replies(self) -> dict:
-    """Poll IMAP for email replies — implemented in Phase 4."""
-    log.info("response_poll_started")
-    return {"status": "ok", "replies_found": 0}
+    """Deprecated alias for ``app.workers.outreach.check_replies``."""
+    from app.workers.outreach import check_replies
+    return check_replies()

@@ -11,6 +11,11 @@ from pathlib import Path
 from app.utils.placeholder_image import text_logo, gradient_image, solid_image
 from PIL import Image
 from app.utils.mockup_build import mockup_project_dir
+from app.workers.mockup_helpers.asset_scorer import (
+    SLOT_SPECS,
+    assign_slots,
+    load_pool,
+)
 
 # Template source — single Astro project with all 3 hero variants
 # (cc-site-template at /tmp/template-check on the laptop, bind-mounted into
@@ -32,7 +37,7 @@ def project_dir_for(slug: str, build_dir: str) -> Path:
 def clone_template(template: str, slug: str, build_dir: str = "") -> dict:
     """Copy the cc-site-template into the build dir.
 
-    The template has all 3 hero variants (HeroCreative/HeroGeneral/HeroTrades)
+    The template has all 3 hero components (HeroCreative/HeroGeneral/HeroTrades)
     in src/components/. The `template` arg here is informational — the LLM
     chooses which hero to render by setting `brand.template` in brand.ts.
 
@@ -74,17 +79,38 @@ def clone_template(template: str, slug: str, build_dir: str = "") -> dict:
 
 def copy_assets(
     slug: str,
-    logo_path: str | None,
-    hero_path: str | None,
-    gallery_paths: list[str],
+    logo_path: str | None = None,
+    hero_path: str | None = None,
+    gallery_paths: list[str] | None = None,
+    candidate_pool: list[str] | None = None,
     build_dir: str = "",
     business_name: str = "Business",
     accent_color: str = "#1a4d5c",
 ) -> dict:
     """Copy scraped images into the template's public/images/ dir.
 
-    Falls back to Pillow-generated placeholders when source files are missing.
-    Validates file sizes (>1KB) to refuse to deploy zero-byte images.
+    Image selection (Session 21, 2026-08-05):
+
+    The LLM in the mockup-builder skill is blind to image content — it
+    only sees paths. To avoid the failure mode where a wide banner (e.g.
+    a SitePad "LOGO.jpg") gets forced into a 4:3 about slot and renders
+    as a "zoomed logo", this function uses pool-based slot-fit scoring
+    from ``asset_scorer.py``.
+
+    Inputs:
+      - ``logo_path`` / ``hero_path`` / ``gallery_paths`` — the LLM's
+        picks. These act as HINTS (+100 boost) rather than hard
+        requirements. If the hinted path isn't usable, the scorer picks
+        the best-fit from the pool instead.
+      - ``candidate_pool`` — every scraped image we know about (paths).
+        When provided, it expands the universe of candidates beyond
+        what the LLM saw in its prompt — important for sites where the
+        scraper captures more images than fit into the LLM's snapshot
+        context.
+
+    Backward compat: if ``candidate_pool`` is empty/None, we fall back
+    to the pre-fix behaviour (use the hints as-is, Pillow fallback for
+    anything missing).
     """
     if not build_dir:
         build_dir = str(mockup_project_dir(slug))
@@ -93,13 +119,42 @@ def copy_assets(
     gallery_dir = images_dir / "gallery"
     images_dir.mkdir(parents=True, exist_ok=True)
 
+    # Build the pool + hint map for the scorer.
+    # Hints come from the LLM (or are None when not provided).
+    gallery_paths = gallery_paths or []
+    while len(gallery_paths) < 4:
+        gallery_paths.append(None)
+
+    pool = load_pool(candidate_pool or [])
+
+    hints: dict[str, str | None] = {
+        "logo": logo_path,
+        "hero": hero_path,
+        "about": None,  # no LLM hint for about — scorer picks from pool
+        "gallery/1": gallery_paths[0],
+        "gallery/2": gallery_paths[1],
+        "gallery/3": gallery_paths[2],
+        "gallery/4": gallery_paths[3],
+    }
+
+    # Decide slot → candidate assignments. When pool is empty, every
+    # assignment is None and we fall back to the old per-slot behaviour.
+    assignments = assign_slots(pool, hints)
+
+    # For slots the scorer left unfilled, fall back to the hinted path
+    # verbatim — this preserves the original "if you said use X, use X"
+    # behaviour when the pool doesn't have a better option.
+    if not pool:
+        for slot_name, hint in hints.items():
+            if assignments.get(slot_name) is None and hint:
+                assignments[slot_name] = hint
+
     copied: list[dict] = []
 
     def _save(src: str | None, dest: Path, kind: str, fallback_fn=None) -> int | None:
         """Copy src to dest, or run fallback_fn(dest) if src is missing/zero-byte."""
         if src and Path(src).exists():
             try:
-                # Use PIL to normalize to JPEG (handles PNG/WEBP/etc)
                 img = Image.open(src).convert("RGB")
                 img.save(dest, "JPEG", quality=85)
                 size = dest.stat().st_size
@@ -117,30 +172,67 @@ def copy_assets(
 
     # Logo
     logo_size = _save(
-        logo_path, images_dir / "logo.jpg", "logo",
+        assignments.get("logo"), images_dir / "logo.jpg", "logo",
         fallback_fn=lambda d: text_logo(business_name, accent_color, d),
     )
 
-    # Hero — fall back to gradient if no hero
+    # Hero — Pillow gradient if neither scorer nor hint produced one
     hero_size = _save(
-        hero_path, images_dir / "hero.jpg", "hero",
+        assignments.get("hero"), images_dir / "hero.jpg", "hero",
         fallback_fn=lambda d: gradient_image(accent_color, d, label=business_name),
     )
 
-    # About — reuse hero if no separate about image
+    # About — prefer a genuinely distinct real photo over duplicating hero.
+    # Reusing hero verbatim for about looks broken to a lead — two site
+    # sections showing the identical photo (flagged 2026-08-31, and this is
+    # NOT a rare edge case in practice: the mockup_copy_assets Pi tool only
+    # recently started exposing candidate_pool at all, so before that fix
+    # this ran in legacy mode on essentially every real build). Track which
+    # paths are already spoken for so about (and gallery, below) prefer an
+    # unused real photo. In pool mode, if no second real photo exists at
+    # all, fall back to the Pillow gradient — NOT a hero duplicate — since
+    # a gradient reads as "a different, deliberately abstract section"
+    # whereas a duplicated hero reads as broken. Legacy no-pool mode (no
+    # candidate_pool passed at all) keeps the historical "about = hero"
+    # behaviour, pinned by test_copy_assets_falls_back_to_hints_when_pool_empty
+    # — there we have no way to do better since we don't even know if a
+    # second image exists.
+    used_paths = {v for v in assignments.values() if v}
+
+    about_assigned = assignments.get("about")
+    if about_assigned is None:
+        if pool:
+            about_assigned = next((c.path for c in pool if c.path not in used_paths), None)
+        elif hints.get("about") is None:
+            about_assigned = assignments.get("hero")
+    if about_assigned:
+        used_paths.add(about_assigned)
     about_size = _save(
-        hero_path, images_dir / "about.jpg", "about",
+        about_assigned, images_dir / "about.jpg", "about",
         fallback_fn=lambda d: gradient_image(accent_color, d, label=business_name),
     )
 
-    # Gallery
-    if gallery_paths:
-        gallery_dir.mkdir(parents=True, exist_ok=True)
-        for i, g_path in enumerate(gallery_paths[:4], 1):
-            _save(
-                g_path, gallery_dir / f"{i}.jpg", f"gallery/{i}",
-                fallback_fn=lambda d, idx=i: solid_image(accent_color, d, label=f"Photo {idx}"),
-            )
+    # Gallery — always create gallery dir with 4 images.
+    gallery_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(1, 5):
+        slot_key = f"gallery/{i}"
+        g_path = assignments.get(slot_key)
+        # If the scorer left this gallery slot empty, prefer any other
+        # unused real photo before falling back to the hero image — same
+        # distinct-first reasoning as the about slot above. In pool mode,
+        # if nothing else is left, fall through to the solid-colour
+        # placeholder rather than a hero duplicate.
+        if g_path is None:
+            if pool:
+                g_path = next((c.path for c in pool if c.path not in used_paths), None)
+            elif hints.get(slot_key) is None:
+                g_path = assignments.get("hero")
+        if g_path:
+            used_paths.add(g_path)
+        _save(
+            g_path, gallery_dir / f"{i}.jpg", f"gallery/{i}",
+            fallback_fn=lambda d, idx=i: solid_image(accent_color, d, label=f"Photo {idx}"),
+        )
 
     # Validate
     required = [images_dir / "logo.jpg", images_dir / "hero.jpg", images_dir / "about.jpg"]
@@ -151,12 +243,80 @@ def copy_assets(
     if missing_or_zero:
         raise RuntimeError(f"required images missing or zero-byte: {missing_or_zero}")
 
+    # L3: build image_audit — tells Pi which images are real vs Pillow placeholders
+    def _is_placeholder(dest: Path) -> bool:
+        """Return True if the written image is a solid-colour placeholder."""
+        try:
+            from io import BytesIO as _BytesIO
+            img = Image.open(dest).convert("L")
+            lo, hi = img.getextrema()
+            return (hi - lo) < 40
+        except Exception:
+            return False
+
+    def _source_kind(kind: str) -> str:
+        for c in copied:
+            if c["kind"] == kind:
+                if c["fallback"]:
+                    return "placeholder"
+                # Phase P: images from stock_images.search_stock_images() are cached
+                # as .cache/audits/<slug>-stock-<queryhash>-<i>.jpg — distinguish them
+                # from images scraped off the lead's own site so the admin UI and the
+                # Pi prompt can tell "scraped" and "stock" apart (both are good
+                # outcomes; only "placeholder" needs attention).
+                src = c.get("src") or ""
+                if "-stock-" in Path(src).name:
+                    return "stock"
+                return "scraped"
+        return "missing"
+
+    gallery_sources = [
+        _source_kind(f"gallery/{i}")
+        for i in range(1, sum(1 for c in copied if c["kind"].startswith("gallery/")) + 1)
+    ]
+
+    hero_dest = images_dir / "hero.jpg"
+    logo_dest = images_dir / "logo.jpg"
+
+    image_audit = {
+        "hero_source": _source_kind("hero"),
+        "logo_source": _source_kind("logo"),
+        "gallery_sources": gallery_sources,
+        "hero_is_placeholder": _is_placeholder(hero_dest) if hero_dest.exists() else True,
+        "logo_is_placeholder": _is_placeholder(logo_dest) if logo_dest.exists() else True,
+        "placeholder_count": sum(
+            1 for k in ["hero", "logo"] + [f"gallery/{i}" for i in range(1, 5)]
+            if _source_kind(k) == "placeholder"
+        ),
+    }
+
+    # ── Pool diagnostics ────────────────────────────────────────────────
+    # Surface to the caller which paths the scorer picked vs the LLM
+    # hinted. Operators can spot "the LLM wanted X but the scorer
+    # overrode it because Y was a better fit" in the worker logs.
+    pool_diagnostics = {
+        "pool_size": len(pool),
+        "assignments": {slot: (path if path else None) for slot, path in assignments.items()},
+        "hint_overrides": {
+            slot: path
+            for slot, path in hints.items()
+            if path and assignments.get(slot) and assignments[slot] != path
+        },
+        "fallbacks_used": {
+            slot: assignments.get(slot) is None
+            for slot in [s for s, _ in SLOT_SPECS]
+            if assignments.get(slot) is None
+        },
+    }
+
     return {
         "copied": copied,
         "logo_bytes": logo_size,
         "hero_bytes": hero_size,
         "about_bytes": about_size,
         "gallery_count": sum(1 for c in copied if c["kind"].startswith("gallery/")),
+        "image_audit": image_audit,
+        "pool_diagnostics": pool_diagnostics,
     }
 
 

@@ -125,33 +125,35 @@ def _render_pdf(business_name="Limelight Event Hire", platform="static_html",
 
 
 def test_email_subject_mentions_pdf():
-    """Subject was 'preview inside' → now 'preview + PDF inside'."""
+    """Subject should be curiosity-driven and title-case the business name."""
     content = _render_email()
-    assert "preview + PDF inside" in content.subject, (
-        f"Subject should mention 'preview + PDF inside'; got {content.subject!r}"
+    # New format: '<BusinessName> — we built a free preview of your new website'
+    assert "free preview" in content.subject, (
+        f"Subject should mention free preview; got {content.subject!r}"
     )
-    # And the old phrasing should be gone from the subject:
-    assert not content.subject.startswith("Your website audit for ") or \
-           "preview + PDF inside" in content.subject
+    assert not content.subject.startswith("Your website audit for "), (
+        f"Subject should not start with old phrasing; got {content.subject!r}"
+    )
 
 
 def test_email_body_html_mentions_attached_pdf():
     """HTML body has a paragraph calling out the attached PDF — the recipient
     needs to know that the paperclip exists."""
     content = _render_email()
-    assert "Full audit PDF attached" in content.body_html, (
+    assert "Full website report attached" in content.body_html, (
         "Body HTML should explicitly mention the attached PDF (paperclip)"
     )
-    # Plus the safe-template-headline-style phrasing:
-    assert "audit PDF" in content.body_html or "PDF attached" in content.body_html
+    # Plain-text fallback carries the literal "PDF" word — the HTML says
+    # "report attached" (paperclip is the universal icon Gmail/Outlook show).
+    assert "PDF" in content.body_text
 
 
 def test_email_body_text_mentions_attached_pdf():
     """Plain-text body is what some clients render by default — must mention
     the PDF explicitly so plain-text readers don't miss it either."""
     content = _render_email()
-    assert "attached the full audit report as a PDF" in content.body_text, (
-        "Text body should say 'attached the full audit report as a PDF'"
+    assert "attached the full website report as a PDF" in content.body_text, (
+        "Text body should say 'attached the full website report as a PDF'"
     )
 
 
@@ -230,10 +232,10 @@ def test_pdf_hides_age_banner_when_copyright_year_missing():
 
 
 def test_pdf_renders_mockup_panel_when_url_set():
-    """Mockup URL + QR code should appear when the lead has a live mockup."""
+    """Preview URL + QR code should appear when the lead has a live preview."""
     html = _render_pdf(mockup_url="https://demo-foo.clientcompass.co.za")
-    assert "Your free mockup is ready" in html, (
-        "Mockup section heading should render"
+    assert "Your free preview is ready" in html, (
+        "Preview section heading should render"
     )
     assert "demo-foo.clientcompass.co.za" in html, (
         "Mockup URL should be visible (and a clickable link)"
@@ -245,8 +247,8 @@ def test_pdf_renders_mockup_panel_when_url_set():
 
 def test_pdf_hides_mockup_panel_when_url_missing():
     html = _render_pdf(mockup_url=None)
-    assert "Your free mockup is ready" not in html, (
-        "Mockup section should be hidden when mockup_url is None"
+    assert "Your free preview is ready" not in html, (
+        "Preview section should be hidden when mockup_url is None"
     )
     assert "Scan to view" not in html, (
         "QR code caption should be hidden when no mockup URL"

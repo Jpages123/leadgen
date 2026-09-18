@@ -57,3 +57,26 @@ celerybeat-schedule
 # Core files (runtime artifacts)
 core.*
 
+
+# Audit assets cache (durable replacement for /tmp/cc_audits — see Session 9)
+.cache/
+
+# Per-build mockup working directories
+/tmp/cc_mockups/
+
+# Pi agent runtime / credentials (bind-mounted into worker container)
+.pi/
+.pi-docker/
+.priors.json
+.priors-runtime/
+
+# Wrangler + pnpm caches
+.wrangler/
+.pnpm-store/
+cache/
+
+# Backups + env dumps (contain live credentials)
+*.bak
+*.bak.*
+.env.backup
+.env.example

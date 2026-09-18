@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import requests
@@ -317,15 +318,34 @@ def enrich_yep_mall_leads(self, batch_size: int = 100, delay: float = 1.0) -> di
     }
 
 
+# How long to wait before retrying a lead whose crawl previously failed
+# (site down, DNS error, timeout, etc). Without this, a permanently-dead
+# site would be retried forever; without SOME retry, a transient outage
+# would blacklist a lead's email extraction forever.
+CRAWL_RETRY_COOLDOWN_HOURS = 24
+
+
 @shared_task(bind=True, name="app.workers.enrichment.tasks.enrich_website_crawl")
 def enrich_website_crawl(self, batch_size: int = 50) -> dict:
     """
     Website crawl for leads that have a website but no email.
     Rate-limit: 2 req/s.
+
+    Bug fix (2026-08-02): this used to select purely on
+    `status='discovered' AND website IS NOT NULL AND email IS NULL` with no
+    ORDER BY and no record of prior attempts. Leads whose site never yields
+    an email (dead domain, timeout, etc.) never stop matching that filter,
+    so with no ORDER BY Postgres kept handing back the same handful of
+    dead URLs on every 15-minute beat tick instead of ever advancing to
+    the rest of the backlog. Now every attempt (success or failure) stamps
+    `enrich_crawl_attempted_at` / `enrich_crawl_failed`, the query excludes
+    leads attempted within the last CRAWL_RETRY_COOLDOWN_HOURS, and results
+    are ordered oldest-first so the backlog actually drains.
     """
     settings = get_settings()
     rate_limit = settings.google_maps_rate_limit or 2
     delay = 1.0 / rate_limit
+    retry_cutoff = datetime.now(timezone.utc) - timedelta(hours=CRAWL_RETRY_COOLDOWN_HOURS)
 
     with sync_session_scope() as session:
         leads = (
@@ -334,6 +354,11 @@ def enrich_website_crawl(self, batch_size: int = 50) -> dict:
             .filter(Lead.website.isnot(None))
             .filter(Lead.website != "")
             .filter(Lead.email.is_(None))
+            .filter(
+                (Lead.enrich_crawl_attempted_at.is_(None))
+                | (Lead.enrich_crawl_attempted_at < retry_cutoff)
+            )
+            .order_by(Lead.discovered_at.asc().nulls_first())
             .limit(batch_size)
             .all()
         )
@@ -347,14 +372,20 @@ def enrich_website_crawl(self, batch_size: int = 50) -> dict:
 
     for lead in leads:
         result = crawl_lead_website(lead)
-        if result.get("skipped") is None:
-            with sync_session_scope() as session:
-                db_lead = session.get(Lead, lead.id)
-                if db_lead:
+        crawl_failed = result.get("skipped") == "crawl_failed"
+        with sync_session_scope() as session:
+            db_lead = session.get(Lead, lead.id)
+            if db_lead:
+                if result.get("skipped") is None:
                     for k, v in result.items():
                         if k not in ("skipped", "lead_id"):
                             setattr(db_lead, k, v)
-                    session.add(db_lead)
+                # Always stamp the attempt so the next run's query moves on,
+                # regardless of whether this attempt found anything.
+                db_lead.enrich_crawl_attempted_at = datetime.now(timezone.utc)
+                db_lead.enrich_crawl_failed = crawl_failed
+                session.add(db_lead)
+        if result.get("skipped") is None:
             # Tier-1 fix (2026-07-08): if the audit flagged this lead for a
             # deferred mockup, queue it now that we have a contact channel.
             _maybe_queue_deferred_mockup(str(lead.id), lead.web_pitch_score)
@@ -367,6 +398,7 @@ def enrich_website_crawl(self, batch_size: int = 50) -> dict:
         "yep_crawl_batch_done",
         processed=processed,
         emails_found=sum(1 for r in results if r.get("email")),
+        crawl_failures=sum(1 for r in results if r.get("skipped") == "crawl_failed"),
     )
 
     return {"status": "ok", "leads_processed": processed, "results": results}

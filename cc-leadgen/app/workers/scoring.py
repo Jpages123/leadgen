@@ -12,47 +12,72 @@ log = get_logger(__name__)
 
 
 def score_lead(lead: Lead) -> int:
-    """Score a lead 0–100 based on contact completeness and quality signals.
+    """Score a lead 0-100 based on reachability and business establishment.
 
-    Rules (from LEAD_GEN_FRAMEWORK.md):
-      whatsapp_number present   +30
-      email present             +15
-      phone present             +10
-      website present           +15
-      google_rating >= 4.5      +10
-      google_review_count >= 20 +10
-      instagram_url present     +5
-      competitor_customer      -50
-      no phone AND no email     -20
+    Optimised for the web-revamp ICP: established SA businesses with a bad
+    website that we can actually contact for a pitch.
 
-    Clamp result to 0–100.
+    Contact (reachability):
+      email present             +25  primary outreach channel
+      phone present             +20  cold call / follow-up
+      whatsapp_number present   +10  secondary contact signal
+
+    Website (pitch prerequisite):
+      website present           +10  must have a site to revamp
+
+    Business establishment (Google Places):
+      google_review_count >= 20 +15  established SA tradesman sweet spot
+      google_review_count >= 75 +10  bonus: very established (stacks with above)
+      google_rating >= 4.0      +10  reputable, worth pitching
+
+    Social:
+      instagram_url present      +5  digitally aware business
+
+    Penalties:
+      review_count < 5 (known)  -25  fly-by-night, not worth pitching
+      competitor_customer       -50  never contact
+      no email AND no phone
+        AND no whatsapp         hard discard (score = 0)
+
+    Clamp result to 0-100.
     """
+    # Hard discard -- completely unreachable
+    if not lead.email and not lead.phone and not lead.whatsapp_number:
+        return 0
+
     score = 0
 
-    if lead.whatsapp_number:
-        score += 30
+    # -- Reachability ---------------------------------------------------------
     if lead.email:
-        score += 15
+        score += 25
     if lead.phone:
+        score += 20
+    if lead.whatsapp_number:
         score += 10
+
+    # -- Pitch prerequisite ---------------------------------------------------
     if lead.website:
-        score += 15
-
-    # Google signals
-    if lead.google_rating is not None and lead.google_rating >= 4.5:
-        score += 10
-    if lead.google_review_count is not None and lead.google_review_count >= 20:
         score += 10
 
-    # Social
+    # -- Business establishment -----------------------------------------------
+    review_count = lead.google_review_count
+    if review_count is not None:
+        if review_count < 5:
+            score -= 25  # fly-by-night penalty
+        elif review_count >= 75:
+            score += 25  # stacks: >= 20 tier (15) + >= 75 bonus (10)
+        elif review_count >= 20:
+            score += 15
+    if lead.google_rating is not None and lead.google_rating >= 4.0:
+        score += 10
+
+    # -- Social ---------------------------------------------------------------
     if lead.instagram_url:
         score += 5
 
-    # Penalties
+    # -- Hard penalty ---------------------------------------------------------
     if getattr(lead, "competitor_customer", False):
         score -= 50
-    if not lead.phone and not lead.email:
-        score -= 20
 
     return max(0, min(score, 100))
 

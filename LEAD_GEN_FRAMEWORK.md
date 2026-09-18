@@ -1,9 +1,9 @@
-# Client Compass — Lead Generation Framework
+# Client Compass - Lead Generation Framework
 
-> **Status**: Phase 1 ✅ · Phase 2 ✅ · Phase 3 🚧 (outreach worker built, SMTP pending creds) · Phase 4 🚧 · Phases 5–6 pending
-> **Last updated**: 2026-05-14  
-> **Owner**: this0ne  
-> **Goal**: Build a cold outbound lead generation system on a home laptop server to find, enrich, score, and contact South African small business owners — converting them to Client Compass paying tenants.
+> **Status**: Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ (test mode) · Phase 4 🚧 · Phases 5-6 pending
+> **Last updated**: 2026-05-14
+> **Owner**: this0ne
+> **Goal**: Build a cold outbound lead generation system on a home laptop server to find, enrich, score, and contact South African small business owners - converting them to Client Compass paying tenants.
 
 ---
 
@@ -14,13 +14,13 @@
 3. [Tech Stack](#3-tech-stack)
 4. [Data Model](#4-data-model)
 5. [Target Verticals & ICP](#5-target-verticals--icp)
-6. [Phase 0 — Foundation](#phase-0--foundation)
-7. [Phase 1 — Lead Discovery](#phase-1--lead-discovery)
-8. [Phase 2 — Enrichment & Scoring](#phase-2--enrichment--scoring)
-9. [Phase 3 — Outreach Engine](#phase-3--outreach-engine)
-10. [Phase 4 — Response Handling](#phase-4--response-handling)
-11. [Phase 5 — CRM Sync](#phase-5--crm-sync)
-12. [Phase 6 — Analytics & Optimisation](#phase-6--analytics--optimisation)
+6. [Phase 0 - Foundation](#phase-0--foundation)
+7. [Phase 1 - Lead Discovery](#phase-1--lead-discovery)
+8. [Phase 2 - Enrichment & Scoring](#phase-2--enrichment--scoring)
+9. [Phase 3 - Outreach Engine](#phase-3--outreach-engine)
+10. [Phase 4 - Response Handling](#phase-4--response-handling)
+11. [Phase 5 - CRM Sync](#phase-5--crm-sync)
+12. [Phase 6 - Analytics & Optimisation](#phase-6--analytics--optimisation)
 13. [Local Dashboard](#local-dashboard)
 14. [Compliance (POPIA)](#compliance-popia)
 15. [Risks & Mitigations](#risks--mitigations)
@@ -39,7 +39,7 @@ Client Compass has no tenants yet. This system is a standalone outbound engine r
 5. **Respond** to replies intelligently and push warm leads into the main app CRM
 6. **Learn** which channels/verticals convert and double down
 
-The product sells itself here: we are selling a WhatsApp automation platform — reaching out via WhatsApp to demonstrate it is the strongest possible demo.
+The product sells itself here: we are selling a WhatsApp automation platform - reaching out via WhatsApp to demonstrate it is the strongest possible demo.
 
 ---
 
@@ -77,7 +77,7 @@ The product sells itself here: we are selling a WhatsApp automation platform —
 │  │  Celery Beat (scheduled jobs) │ Celery Workers                │ │
 │  └───────────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────┘
-         │  Optional — Tailscale tunnel
+         │  Optional - Tailscale tunnel
          ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │              VPS / PRODUCTION SERVER  (Tailscale: 100.82.23.104)   │
@@ -85,20 +85,20 @@ The product sells itself here: we are selling a WhatsApp automation platform —
 │  Nginx  →  /webhook/leadgen/whatsapp proxy_pass → laptop:8000       │
 │  PostgreSQL:5432  ←  direct INSERT on admin_crm.leads (Phase 5)    │
 │                                                                      │
-│  admin_crm.leads (main CRM) — warm leads appear here automatically  │
+│  admin_crm.leads (main CRM) - warm leads appear here automatically  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Design Decisions
 
-- **Home laptop as server** — zero hosting cost, Tailscale handles private networking
-- **Local dashboard** — runs on the laptop alongside the pipeline. No production VPS dependency for admin access. Can be accessed over LAN or Tailscale.
-- **Tailscale for all inter-server communication** — encrypted, no firewall rules needed, works behind home NAT
-- **WhatsApp webhooks via Nginx proxy on production** — production server has a public URL + SSL already. Nginx on production forwards `/webhook/leadgen/whatsapp` to the laptop's Tailscale IP. Zero extra tooling.
-- **CRM sync via direct PostgreSQL over Tailscale** — laptop connects directly to `prod-tailscale-ip:5432` with a restricted `leadgen_user` role. No new API endpoint needed on production. Deferred pending VPS access.
-- **IMAP polling and SMTP sending are outbound** — no public exposure needed, work fine through home internet
-- **Celery + Redis** — async job queue for all workers
-- **Pi/Discord integration** — operator alerts for replies, errors, daily digest
+- **Home laptop as server** - zero hosting cost, Tailscale handles private networking
+- **Local dashboard** - runs on the laptop alongside the pipeline. No production VPS dependency for admin access. Can be accessed over LAN or Tailscale.
+- **Tailscale for all inter-server communication** - encrypted, no firewall rules needed, works behind home NAT
+- **WhatsApp webhooks via Nginx proxy on production** - production server has a public URL + SSL already. Nginx on production forwards `/webhook/leadgen/whatsapp` to the laptop's Tailscale IP. Zero extra tooling.
+- **CRM sync via direct PostgreSQL over Tailscale** - laptop connects directly to `prod-tailscale-ip:5432` with a restricted `leadgen_user` role. No new API endpoint needed on production. Deferred pending VPS access.
+- **IMAP polling and SMTP sending are outbound** - no public exposure needed, work fine through home internet
+- **Celery + Redis** - async job queue for all workers
+- **Pi/Discord integration** - operator alerts for replies, errors, daily digest
 
 ---
 
@@ -116,8 +116,8 @@ The product sells itself here: we are selling a WhatsApp automation platform —
 | Database | PostgreSQL 16 | Same as main app, easy reasoning |
 | Migrations | Alembic | Standard for Python/Postgres |
 | Scraping | Playwright + BeautifulSoup4 | JS-rendered pages + static HTML |
-| Email outreach | Zoho SMTP — `outreach@clientcompass.co.za` | DMARC + SPF configured, warm-start at 5/day |
-| WhatsApp outreach | ⏸️ Deferred — Meta Cloud API ~R720/mo not viable pre-revenue | Enable once 4+ tenants are paying |
+| Email outreach | Zoho SMTP - `outreach@clientcompass.co.za` | DMARC + SPF configured, warm-start at 5/day |
+| WhatsApp outreach | ⏸️ Deferred - Meta Cloud API ~R720/mo not viable pre-revenue | Enable once 4+ tenants are paying |
 | Logging | structlog (JSON) | Consistent with main app |
 | Containerisation | Docker Compose | Same pattern as main app |
 | Ops | Makefile | Consistent developer experience |
@@ -228,7 +228,7 @@ created_at      TIMESTAMPTZ DEFAULT now()
 - **WhatsApp signal**: Uses WhatsApp as primary communication channel (visible on Google listing or website)
 - **Pain point**: Losing enquiries because they can't respond fast enough; no system for follow-ups
 
-### Verticals — Priority Order
+### Verticals - Priority Order
 
 | Priority | Vertical | Why |
 |----------|----------|-----|
@@ -243,9 +243,23 @@ created_at      TIMESTAMPTZ DEFAULT now()
 
 ---
 
+## Pipeline Schedule (When Each Phase Runs)
+
+| Job | Schedule | Timezone | What it does |
+|-----|----------|----------|--------------|
+| `discovery-daily` | Daily | 08:00 SAST | Scrapes Yep Mall for new leads across all verticals |
+| `enrichment-process` | Every 15 min | SAST | Fetches email/website/contact for newly discovered leads |
+| `outreach-queue-leads` | Every 2h | SAST | Moves enriched leads (score ≥40) → `outreach_queued` |
+| `outreach-send` | Every 30 min | SAST | Sends email to `outreach_queued` leads (respects daily cap) |
+| `response-poll` | Every 15 min | SAST | Polls outreach inbox for replies, updates lead status |
+
+**All times**: South Africa timezone (UTC+2, Africa/Johannesburg)
+
+---
+
 ## Phase 0 — Foundation ✅ (2026-05-07)
 
-**Goal**: Provision server, project skeleton, DB, queue, logging, Discord alerts.  
+**Goal**: Provision server, project skeleton, DB, queue, logging, Discord alerts.
 
 ### ✅ Completed
 - [x] OS confirmed: Debian 13
@@ -253,8 +267,8 @@ created_at      TIMESTAMPTZ DEFAULT now()
 - [x] Project repo created: `github.com/Jpages123/cc-leadgen`
 - [x] Docker Compose services: `postgres`, `redis`, `app`, `worker`, `beat`
 - [x] Project structure (see `cc-leadgen/` directory)
-- [x] Alembic migrations applied (`001_initial` — all 5 tables)
-- [x] `.env` configured — all variables set
+- [x] Alembic migrations applied (`001_initial` - all 5 tables)
+- [x] `.env` configured - all variables set
 - [x] `structlog` JSON logging wired throughout
 - [x] FastAPI app with `/health`, `/metrics`, `/webhook/*` routes
 - [x] Celery + Beat wired up with placeholder tasks per phase
@@ -272,10 +286,10 @@ created_at      TIMESTAMPTZ DEFAULT now()
 
 ---
 
-## Phase 1 — Lead Discovery ✅ (2026-05-14)
+## Phase 1 - Lead Discovery ✅ (2026-05-14)
 
-**Goal**: Discover 500+ raw leads across top 3 verticals.  
-**Status**: ✅ Done — 467 leads scraped in one session
+**Goal**: Discover 500+ raw leads across top 3 verticals.
+**Status**: ✅ Done - 467 leads scraped in one session
 
 ### Yep Mall Discovery (Primary)
 **Source**: `POST https://fm.mall.yep.co.za/api/seller/searchStore` (no auth)
@@ -290,7 +304,7 @@ created_at      TIMESTAMPTZ DEFAULT now()
 - Address parsing: city/province extracted from `storeAddress` string
 - Deduplication by `seller_id`
 
-**Import**: `cc-leadgen/import_yep_leads.py` — syncs SQLite → Postgres `leads` table
+**Import**: `cc-leadgen/import_yep_leads.py` - syncs SQLite → Postgres `leads` table
 
 ### ✅ All Tasks Complete
 - [x] Yep Mall API discovered and mapped
@@ -303,9 +317,9 @@ created_at      TIMESTAMPTZ DEFAULT now()
 
 ---
 
-## Phase 2 — Enrichment & Scoring ✅ (2026-05-14)
+## Phase 2 - Enrichment & Scoring ✅ (2026-05-14)
 
-**Goal**: Add contact info to each lead, score them, queue the top 60%+ for outreach.  
+**Goal**: Add contact info to each lead, score them, queue the top 60%+ for outreach.
 **Status**: ✅ Done
 
 ### Yep Mall Detail API Enrichment
@@ -362,23 +376,45 @@ def score_lead(lead) -> int:
 
 | Score | Action |
 |-------|--------|
-| 60–100 | High priority → `outreach_queued` immediately |
-| 40–59 | Medium priority → `outreach_queued` (second batch) |
-| 20–39 | Low priority → hold, re-enrich in 30 days |
-| 0–19 | Discard → `status = 'invalid'` |
+| 60-100 | High priority → `outreach_queued` immediately |
+| 40-59 | Medium priority → `outreach_queued` (second batch) |
+| 20-39 | Low priority → hold, re-enrich in 30 days |
+| 0-19 | Discard → `status = 'invalid'` |
 
 ---
 
-## Phase 3 — Outreach Engine 🚧 (In Progress)
+## Phase 3 - Outreach Engine ✅ (Done - test mode active)
 
-**Goal**: Contact qualified leads with personalised, vertical-specific messages via email.  
-**Status**: Worker built, awaiting SMTP credentials + first test send
+**Goal**: Contact qualified leads with personalised, vertical-specific messages via email.
+**Status**: ✅ Worker built, SMTP connected, test mode active, 5 real emails accidentally sent before gates (2026-05-14 09:47 UTC) - gates applied immediately after.
 
-### Email via Zoho SMTP
-- **From**: `outreach@clientcompass.co.za` (DMARC + SPF configured)
-- **SMTP**: `smtp.zoho.com:587` (STARTTLS)
-- **Daily cap**: 5 emails (warm-up phase, ramps to 30-50 over months)
-- **Volume ramp**: Week 1-2: 5/day → Week 3-4: 15-25/day → Month 2+: 30-50/day
+### 🛡️ Send Mode Safety Gates (Active - real leads protected)
+
+**Two layers of defence, both must pass:**
+
+| Layer | What it does |
+|-------|-------------|
+| **SQL query filter** | `send_mode=test` restricts the lead query to only whitelist emails |
+| **SMTP-level gate** | Any non-whitelisted email skipped at send time, logged as `smtp_test_mode_blocked` |
+
+**Test addresses** (the only ones that receive emails in `test` mode):
+- `jpages123@gmail.com`
+- `jpages123@proton.me`
+
+**Blocked domains** (personal/consumer - never business leads):
+`gmail.com`, `proton.me`, `protonmail.com`, `yahoo.com`, `hotmail.com`, `outlook.com`, `icloud.com`, `mail.com`, `aol.com`
+
+**Config** (`.env`):
+```bash
+SEND_MODE=test                    # flip to 'live' when ready for real sends
+TEST_EMAIL_WHITELIST_CSV=jpages123@gmail.com,jpages123@proton.me
+BLOCKED_EMAIL_DOMAINS_CSV=gmail.com,proton.me,...
+```
+
+**Flip to live** - change in `.env`, then:
+```bash
+docker compose build && docker compose restart worker beat
+```
 
 ### Templates (per vertical)
 | Template | Target |
@@ -408,9 +444,9 @@ Each template: plain-text + HTML, unsubscribe link, CTA ("Reply YES for WhatsApp
 
 ---
 
-## Phase 4 — Response Handling 🚧 (Partial)
+## Phase 4 - Response Handling 🚧 (Partial)
 
-**Goal**: Detect replies, classify intent, alert operator.  
+**Goal**: Detect replies, classify intent, alert operator.
 **Status**: IMAP poll task exists, needs full reply parsing + Discord alerts
 
 - [x] `check_replies` Celery task (IMAP polling every 15 min)
@@ -423,10 +459,10 @@ Each template: plain-text + HTML, unsubscribe link, CTA ("Reply YES for WhatsApp
 
 ---
 
-## Phase 5 — CRM Sync
+## Phase 5 - CRM Sync
 
-**Goal**: Push warm leads into `admin_crm.leads` on the production server.  
-**Estimated time**: 1–2 days
+**Goal**: Push warm leads into `admin_crm.leads` on the production server.
+**Estimated time**: 1-2 days
 
 Deferred pending VPS access. Requires:
 - `leadgen_user` created on hub postgres with INSERT + SELECT on `admin_crm.leads`
@@ -435,12 +471,12 @@ Deferred pending VPS access. Requires:
 
 ---
 
-## Phase 6 — Analytics & Optimisation
+## Phase 6 - Analytics & Optimisation
 
-**Goal**: Understand what's working, double down on it.  
+**Goal**: Understand what's working, double down on it.
 **Estimated time**: Ongoing
 
-See **Local Dashboard** section below — dashboard pages replace the standalone analytics server.
+See **Local Dashboard** section below - dashboard pages replace the standalone analytics server.
 
 | Metric | Target (Month 1) |
 |--------|-----------------|
@@ -455,8 +491,8 @@ See **Local Dashboard** section below — dashboard pages replace the standalone
 
 ## Local Dashboard
 
-> **Running at**: `http://localhost:8000`  
-> **Stack**: FastAPI + Jinja2 + HTMX (server-rendered HTML, partial swaps)  
+> **Running at**: `http://localhost:8000`
+> **Stack**: FastAPI + Jinja2 + HTMX (server-rendered HTML, partial swaps)
 > **Repo**: `github.com/Jpages123/cc-leadgen`
 
 The dashboard is the local admin UI for the lead generation pipeline. It runs on the same laptop as the pipeline workers and connects to the same PostgreSQL instance. No production VPS dependency.
@@ -472,7 +508,7 @@ The dashboard is the local admin UI for the lead generation pipeline. It runs on
 
 ### Dashboard Implementation Phases
 
-#### Phase 1 — Foundation ✅ Done (2026-05-13)
+#### Phase 1 - Foundation ✅ Done (2026-05-13)
 - [x] Base HTML template with top navbar (Dashboard · Leads · Sequences · Discovery)
 - [x] CSS variables, system fonts, slate/zinc palette, no external CSS framework
 - [x] Dashboard home: 6 metrics cards + status mix bar chart + 7-day discovery trend
@@ -482,7 +518,7 @@ The dashboard is the local admin UI for the lead generation pipeline. It runs on
 - [x] All partial templates in `templates/partials/`
 - [x] `cc-leadgen/DASHBOARD.md` tracks full dashboard task list
 
-#### Phase 2 — HTMX Interactivity 🚧 Next Session
+#### Phase 2 - HTMX Interactivity 🚧 Next Session
 - [ ] Add HTMX CDN + extensions to `base.html`
 - [ ] Leads: status/source filters → `hx-get="/leads" hx-target="#lead-table-body" hx-swap="innerHTML"`
 - [ ] Leads: search input with 400ms debounce → HTMX partial swap
@@ -494,12 +530,12 @@ The dashboard is the local admin UI for the lead generation pipeline. It runs on
 - [ ] New partial routes: `GET /leads/partial`, `GET /sequences/partial`
 - [ ] Remove vanilla JS from discovery page, replace with HTMX equivalents
 
-#### Phase 3 — Charts & Analytics
+#### Phase 3 - Charts & Analytics
 - [ ] Outreach pulse bar chart (emails sent per day, 7-day)
 - [ ] Discovery trend text-based bar chart (7-day window)
 - [ ] Lead funnel vertical chart on dashboard
 
-#### Phase 4 — Outreach Engine UI
+#### Phase 4 - Outreach Engine UI
 - [ ] Show active email sequences per lead
 - [ ] Preview template rendering with real data
 - [ ] Manual send override for individual leads
@@ -527,7 +563,7 @@ South Africa's POPIA governs processing of personal information. Cold B2B outrea
 |------|------------|--------|------------|
 | Google Maps API cost overrun | Medium | Low | Hard cap at $50/month in Google Cloud |
 | Email sender reputation damaged | Medium | High | Zoho SMTP + DMARC/SPF, warm-start at 5/day (not 50/day) |
-| WhatsApp quality rating drops | Medium | High | Deferred — not active until revenue covers Meta API cost |
+| WhatsApp quality rating drops | Medium | High | Deferred - not active until revenue covers Meta API cost |
 | Low data quality from directories | High | Medium | Enrichment + scoring filters bad data before outreach |
 | POPIA complaint | Low | High | Opt-out in every message, honour immediately |
 | VPS access not available for CRM sync | High | Medium | Local dashboard provides full visibility; CRM sync deferred |

@@ -21,6 +21,7 @@ from app.scrapers import (
     run_yellsa_discovery,
 )
 from app.scrapers.base import classify_business_type, infer_city_and_province, normalise_phone
+from app.utils.app_settings import get_bool_setting
 from app.utils.logger import get_logger
 from app.utils.rejected_websites import is_rejected, refresh
 
@@ -123,6 +124,15 @@ def run_daily_discovery(
         max_pages: Max pages per source/city combo.
     """
     settings = get_settings()
+
+    # Admin-toggleable kill switch (2026-08-28): Google Places API budget
+    # running low, and there was no way to pause daily discovery short of
+    # editing code + redeploying. Toggled from the Leadgen Flow admin page
+    # (Discovery card) — see app/utils/app_settings.py.
+    if not get_bool_setting("discovery_enabled", default=True):
+        log.info("discovery_run_skipped", reason="disabled_via_admin_toggle", job_id=job_id)
+        return {"status": "ok", "found": 0, "new": 0, "reason": "disabled_via_admin_toggle"}
+
     sources = sources or ["google_places"]
     verticals = [vertical] if vertical else DEFAULT_VERTICALS
     max_pages = max_pages or DEFAULT_MAX_PAGES

@@ -53,6 +53,45 @@ class Settings(BaseSettings):
     follow_up_step2_gap_hours: int = 96
     follow_up_step3_gap_hours: int = 120
 
+    # ── Business-hours gating (Phase M hardening) ────────────────────────────
+    # When enabled, send_follow_up_sequence refuses to send outside business
+    # hours in the configured timezone. Candidates remain eligible and will
+    # fire on the next eligible beat tick that lands in business hours.
+    # SAST is UTC+2 year-round (no DST) so we use a fixed offset rather than
+    # an external timezone library.
+    follow_up_business_hours_only: bool = True
+    follow_up_business_tz_offset_hours: int = 2   # SAST = UTC+2
+    follow_up_business_start_hour: int = 8       # 08:00 inclusive
+    follow_up_business_end_hour: int = 17        # 17:00 exclusive
+
+    # ── Within-day pacing (Phase N) ──────────────────────────────────────────
+    # Spread follow-up sends evenly across today's remaining business hours so a
+    # Monday-morning backlog doesn't fire as a single burst. Interval is computed
+    # as (end_hour - start_hour) hours / N, clamped by a min-interval floor.
+    # Disable with follow_up_pace_across_business_hours=False to restore the old
+    # 2-second sleep between sends.
+    follow_up_pace_across_business_hours: bool = True
+    follow_up_pace_min_interval_seconds: int = 30  # never send faster than this
+
+    # ── Business-hours gating for initial (step-1) outreach ──────────────────
+    # send_email_sequence previously had no time-of-day restriction at all —
+    # it could (and did) fire in the middle of the night whenever
+    # outreach-queue-leads and outreach-send landed on the same beat tick.
+    # Reuses the same business-hours window / timezone offset / pacing floor
+    # as the follow-up settings above, since it's one company-wide policy.
+    outreach_business_hours_only: bool = True
+    outreach_pace_across_business_hours: bool = True
+
+    # Kill switch for send_email_sequence (2026-08-28): this is the only
+    # outreach path with no operator review — it auto-sends the old
+    # WhatsApp-pitch templates to generic (non-web-revamp) leads. Disabled
+    # after the pivot to web-revamp-only surfaced a ~130-lead pre-pivot
+    # backlog getting emailed with the stale pitch. The `outreach-send`
+    # beat entry is also removed in celery_app.py; this flag guards against
+    # the task being manually re-triggered. Flip back on only once a
+    # reviewed draft flow exists for generic leads.
+    outreach_send_enabled: bool = False
+
     # ── WhatsApp (deferred) ───────────────────────────────────────────
     meta_graph_version: str = "v22.0"
     whatsapp_number: str = "+27740940550"

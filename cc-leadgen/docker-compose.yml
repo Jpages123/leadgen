@@ -79,7 +79,11 @@ services:
       - /home/this0ne/.pi/agent/extensions/mockup-builder.ts:/app/.pi-docker/agent/extensions/mockup-builder.ts:ro
       # cc-site-template (Astro project with 3 hero variants). Local copy
       # on the laptop is the source of truth; container reads via ro mount.
-      - /tmp/template-check:/opt/templates/cc-site-template:ro
+      # Session 25 (2026-08-06): moved off /tmp/template-check (root-owned
+      # 0755 + sticky /tmp = this0ne couldn't write without `docker run`
+      # tricks). Now under the templates/ dir that this0ne owns outright,
+      # so the next template edit is just a file save — no chmod dance.
+      - /home/this0ne/installedApps/leadgen/templates/cc-site-template:/opt/templates/cc-site-template:ro
 
   beat:
     build: .

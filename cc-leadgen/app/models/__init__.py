@@ -1,6 +1,7 @@
 """Models package — exposes all SQLAlchemy models."""
 from __future__ import annotations
 
+from app.models.app_setting import AppSetting
 from app.models.base import Base
 from app.models.discovery_job import DiscoveryJob
 from app.models.lead import Lead
@@ -17,4 +18,5 @@ __all__ = [
     "LeadEvent",
     "DiscoveryJob",
     "RejectedWebsite",
+    "AppSetting",
 ]

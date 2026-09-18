@@ -225,9 +225,25 @@ Workflow (use the tools in order, max {MAX_ITERATIONS} build iterations):
         real photos you actually need) — it downloads the file locally and tells you if it
         rejected the image as too small/placeholder. Use the returned local_path as a
         hero_path/gallery_paths entry in mockup_copy_assets.
-   Only fall back to a gradient hero / a short-or-empty gallery (per rule (f) below) if this
-   extra Playwright pass genuinely finds nothing better — don't skip this step just because
-   <site_snapshot> came back thin; that's exactly the case it's for.
+   STOCK PHOTO FALLBACK — if, after step (a)-(d) above, a slot (hero, about, or fewer than 2
+   gallery images) STILL lacks a real, on-topic photo, the lead's own site genuinely doesn't
+   have enough usable imagery — this happens often for this ICP. Before settling for a
+   gradient or a thin gallery:
+     e. Call mockup_search_stock_images(query, slug, slot_hint) with a query built from
+        business_type plus vertical style words (e.g. "plumber south africa professional
+        photo" for trades, "elegant wedding marquee evening lights" for creative/event). It
+        returns candidate photos from Pexels (free, watermark-free, no attribution required)
+        for you to look at directly.
+     f. Pick at most one winner per call based on relevance + aesthetic fit — reject anything
+        that isn't a real, on-topic, unwatermarked photo. Refine the query and call again once
+        if nothing fits.
+     g. Use the picked local_path as a hero_path/gallery_paths entry in mockup_copy_assets,
+        same as a Playwright-fetched image. NOT valid for the logo slot — never source a logo
+        from stock search; the text-logo fallback (omit logo_path) is correct there.
+   Only fall back to a gradient hero / a short-or-empty gallery (per rule (f) in the copy
+   rules below) if stock search ALSO comes up empty — this should now be rare. Don't skip
+   straight to a placeholder just because <site_snapshot> and Playwright both came back thin;
+   that's exactly the case steps (e)-(g) are for.
 3. Decide template based on business_type AND visual aesthetic from step 2:
    - photography / event_planning → 'creative' (Playfair Display, dark, full-bleed, gallery-first)
    - plumbing / electrical / construction / cleaning / automotive → 'trades' (Oswald, bold, trust signals)
@@ -267,15 +283,31 @@ Workflow (use the tools in order, max {MAX_ITERATIONS} build iterations):
       If hero is unavailable/placeholder BUT <site_snapshot> has gallery images, use gallery[0].local
       as the hero_path in mockup_copy_assets — a real event photo is always better than a gradient.
       Only fall back to gradient (no hero_path) if no real images exist at all.
+      HERO AND ABOUT MUST BE DIFFERENT IMAGES. Do not point about_path (or leave about unhinted
+      when there's only one real photo total) at the same file as hero_path — two sections of the
+      same page showing the identical photo reads as broken to a lead, not "consistent branding".
+      If <site_snapshot>/Playwright/mockup_fetch_image only turned up ONE distinct real photo,
+      that one photo is the hero — then call mockup_search_stock_images(slot_hint="about") for a
+      second, different photo (e.g. a team/premises/detail shot rather than the same wide banner
+      style as the hero) rather than letting hero and about duplicate.
    h) Do not write near-duplicate content: no two services with overlapping names/descriptions
       (e.g. "Electrical Maintenance" and "Electrical & Maintenance" describing the same thing —
       merge or differentiate them), and the two "About" paragraphs must each add distinct
       information rather than restating the same sentence in different words.
 6. mockup_write_config("{slug}", client_ts, brand_ts)
 7. mockup_copy_assets("{slug}", logo_path=..., hero_path=..., gallery_paths=...,
-   business_name="{lead.business_name}", accent_color=<chosen>)
-   CHECK the returned image_audit block. If hero_is_placeholder=true AND <site_snapshot> contains
-   a valid hero_local_path, call mockup_copy_assets again with that corrected hero_path.
+   candidate_pool=[<every real image path you've gathered — site_snapshot locals,
+   mockup_fetch_image downloads, mockup_search_stock_images picks — NOT just your per-slot
+   hints>], business_name="{lead.business_name}", accent_color=<chosen>)
+   ALWAYS pass candidate_pool. Omitting it disables distinct-per-slot scoring and WILL
+   duplicate your hero pick into the about slot (and possibly gallery) whenever those slots
+   don't have their own hint — the exact hero/about-duplicate bug users have flagged before.
+   CHECK the returned image_audit block. hero_source/logo_source/gallery_sources will each be
+   "scraped", "stock", or "placeholder" — "scraped" and "stock" are both fine outcomes;
+   "placeholder" means the fallback ladder in step 2 was exhausted. If hero_is_placeholder=true
+   AND <site_snapshot> contains a valid hero_local_path, call mockup_copy_assets again with
+   that corrected hero_path. If it's still placeholder and you haven't tried
+   mockup_search_stock_images yet, do that now (step 2, sub-steps e-g) before accepting it.
 8. mockup_build("{slug}")
 9. mockup_deploy("{slug}") — returns BOTH `pages_url` (raw *.pages.dev, Cloudflare's
    internal domain) and `demo_url` (the branded demo-<slug>.clientcompass.co.za domain).
@@ -285,6 +317,10 @@ Workflow (use the tools in order, max {MAX_ITERATIONS} build iterations):
    internal implementation detail and must never be shown to the operator or lead.
 10. mockup_verify(<demo_url>, "{lead.business_type or 'general'}")
     If image_audit shows placeholder_count > 0, treat as an issue requiring iteration.
+    If issues includes "duplicate_hero_about_image", the deployed hero.jpg and about.jpg are
+    byte-identical — call mockup_search_stock_images(slot_hint="about") for a distinct photo,
+    then mockup_copy_assets (with candidate_pool including the new pick) + mockup_build +
+    mockup_deploy + mockup_verify again before proceeding.
 11. MANDATORY VISUAL REVIEW — mockup_write_approval is blocked until this step
     succeeds at least once, so do not skip it: call mockup_screenshot(<demo_url>)
     (desktop viewport at minimum; mobile viewport is strongly recommended given
@@ -302,17 +338,31 @@ Workflow (use the tools in order, max {MAX_ITERATIONS} build iterations):
       is invisible even if it "should" be styled as a heading — look for this
       specifically since it has appeared before.
     - Gallery and About images are real photographs (people, premises, products,
-      events) — not logos, icons, or generic stock/marketing graphics.
+      events) — not logos, icons, or irrelevant marketing graphics scraped from the
+      original site. A deliberately-sourced Pexels stock photo (via
+      mockup_search_stock_images) is a fine, intended outcome — only flag it if the
+      photo itself looks irrelevant, generic-corporate-cliche, or poorly cropped.
     - Gallery images are actually different from each other — if two or more tiles
       look like the exact same photo (even cropped differently), that means you
       duplicated a src path; fix the gallery array per COPY RULE (f) above. If you
       only had 0-1 real photos from <site_snapshot> and haven't yet tried the
-      Playwright + mockup_fetch_image fallback from step 2, do that now before
-      settling for a short/empty gallery.
+      Playwright + mockup_fetch_image fallback or mockup_search_stock_images from
+      step 2, do that now before settling for a short/empty gallery.
+    - If ANY image on this checklist looks wrong (bad crop, irrelevant, low quality)
+      and the fix is simply swapping the image — not a layout/copy bug — call
+      mockup_search_stock_images (or mockup_fetch_image if you know a better URL on
+      the lead's own site), then mockup_copy_assets + mockup_build + mockup_deploy +
+      mockup_verify again, within your remaining iteration budget. Don't ship a
+      known-bad image and just note it for the operator to fix manually — that's
+      the manual step this tool exists to eliminate.
     - Logo placement and cropping — no wide banner logos squeezed/cropped into a
       narrow slot (the exact bug this step exists to catch).
     - Colour palette feels consistent with the lead's brand.
     - Hero image is real (not a grey/gradient placeholder).
+    - Hero and About images are DIFFERENT photos, not the same image reused — compare them
+      directly. If they look identical, you skipped passing candidate_pool to mockup_copy_assets
+      or the pool only had one real photo; call mockup_search_stock_images(slot_hint="about")
+      for a second, different photo and rebuild (per the repair-loop item below).
     - Layout is not broken — no overlapping text, no illegible contrast, no
       empty/blank rectangles where an image or content should be, no obviously
       unprofessional rendering.
@@ -327,7 +377,11 @@ Workflow (use the tools in order, max {MAX_ITERATIONS} build iterations):
     final rationale — do not silently ship a mockup you know looks wrong.
 13. When verify passes AND the mockup_screenshot review looks right, OR iterations are
     exhausted: mockup_write_approval(lead_id, demo_url, recommendation) — pass the
-    clientcompass.co.za demo_url from step 9, not pages_url.
+    clientcompass.co.za demo_url from step 9, not pages_url. Include an "image_audit"
+    key in the recommendation object with the final hero_source/logo_source/
+    gallery_sources values from the last mockup_copy_assets call (each "scraped",
+    "stock", or "placeholder") — the admin approval UI surfaces this so the operator
+    can see at a glance whether any image still needs manual attention.
 
 Return a final JSON: {{"status": "ok"|"failed", "mockup_url": "<the demo_url from step 9, e.g. https://demo-{slug}.clientcompass.co.za, NEVER a *.pages.dev URL>", "iterations": N, "rationale": "..."}}
 

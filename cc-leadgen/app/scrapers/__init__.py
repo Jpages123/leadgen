@@ -12,6 +12,11 @@ from app.scrapers.yellsa import (
     scrape_category_city as scrape_yellsa,
     run_yellsa_discovery,
 )
+from app.scrapers.google_places import (
+    GooglePlacesLead,
+    GooglePlacesResult,
+    run_google_places_discovery,
+)
 
 __all__ = [
     "YellsaLead",
@@ -22,6 +27,9 @@ __all__ = [
     "CylexSearchResult",
     "scrape_cylex",
     "run_cylex_discovery",
+    "GooglePlacesLead",
+    "GooglePlacesResult",
+    "run_google_places_discovery",
     "normalise_phone",
     "infer_city_and_province",
 ]

@@ -185,7 +185,43 @@ def send_email_sequence(self, batch_size: int = 10) -> dict:
     - SQL query filter: only whitelisted emails selected from DB
     - SMTP-level defence in depth: any non-whitelisted email skipped at send time
     Flip to live by setting SEND_MODE=live in .env
+
+    Business-hours gating: when outreach_business_hours_only is enabled
+    (default), refuses to send outside Mon-Fri [start_hour, end_hour) in the
+    configured timezone — same guard as send_follow_up_sequence (Phase N).
+    Added after a real incident where the outreach-queue-leads (every 2h)
+    and outreach-send (every 30 min) beat ticks landed together at 00:00 UTC
+    and cold-emailed 5 real prospects at 02:00 SAST. Candidates remain
+    eligible and simply fire on the next beat tick inside business hours.
+
+    Kill switch (settings.outreach_send_enabled, default False, 2026-08-28):
+    this is the only outreach path with zero operator review — it selects
+    `outreach_queued` leads with no PDF/approved mockup and sends them the
+    old `default`/`hair_beauty`/`cleaning` WhatsApp-pitch templates straight
+    over SMTP. After the pivot to web-revamp-only, that pitch is no longer
+    accurate for any live lead, and a ~130-lead pre-pivot backlog was
+    silently drip-feeding those emails out (e.g. Kodec Auto Electrical,
+    Felicia's Carpet Cleaning, Carma Cleaning, Peter Bretherton Landscapes —
+    2026-08-27/28) with no draft/approval step at all. The `outreach-send`
+    beat entry has also been removed in `celery_app.py`; this flag is
+    belt-and-suspenders in case the task is ever manually re-triggered or
+    re-scheduled. Flip back on only once a reviewed draft flow exists for
+    generic (non-web-revamp) leads.
     """
+    if not getattr(settings, "outreach_send_enabled", False):
+        log.warning("outreach_send_disabled", reason="pivoted_to_web_revamp_only")
+        return {"status": "ok", "sent": 0, "reason": "disabled_post_pivot"}
+
+    if getattr(settings, "outreach_business_hours_only", True) and not is_business_time():
+        local = _local_now()
+        log.info(
+            "outreach_outside_business_hours",
+            local_iso=local.isoformat(),
+            weekday=local.weekday(),
+            hour=local.hour,
+        )
+        return {"status": "ok", "sent": 0, "reason": "outside_business_hours"}
+
     daily_limit = settings.email_daily_limit or 5
     min_gap_hours = settings.email_min_gap_hours or 72
     send_mode = settings.send_mode or "test"
@@ -235,7 +271,15 @@ def send_email_sequence(self, batch_size: int = 10) -> dict:
         log.info("outreach_no_leads_ready", send_mode=send_mode)
         return {"status": "ok", "sent": 0, "reason": "no_leads_ready"}
 
-    log.info("outreach_sending_batch", count=len(leads), send_mode=send_mode)
+    # Within-day pacing: spread step-1 sends across today's business hours
+    # instead of firing a freshly-queued batch as one burst. See
+    # compute_pacing_seconds (shared with send_follow_up_sequence).
+    if getattr(settings, "outreach_pace_across_business_hours", True):
+        pacing_seconds = compute_pacing_seconds(len(leads))
+    else:
+        pacing_seconds = 0.0
+
+    log.info("outreach_sending_batch", count=len(leads), send_mode=send_mode, pacing_seconds=pacing_seconds)
     sent = failed = 0
 
     try:
@@ -297,7 +341,7 @@ def send_email_sequence(self, batch_size: int = 10) -> dict:
 
             sent += 1
             log.info("outreach_email_sent", lead_id=str(lead.id), email=lead.email, send_mode=send_mode)
-            time.sleep(2)
+            time.sleep(pacing_seconds or 2)
 
         except Exception as e:
             log.error("outreach_send_failed", lead_id=str(lead.id), error=str(e))
@@ -313,6 +357,77 @@ def send_email_sequence(self, batch_size: int = 10) -> dict:
     return {"status": "ok", "sent": sent, "failed": failed}
 
 
+def _handle_reply(candidate_message_ids: set[str], from_email: str | None, subject: str) -> bool:
+    """Match an inbound message's headers against a sent OutreachSequence.
+
+    On match: marks that sequence 'replied', skips any other still-pending
+    sequence rows for the lead (stops further follow-ups), flips the lead
+    to 'responded', clears next_follow_up_at, logs a LeadEvent, and fires a
+    Discord alert. Returns True if a matching sequence was found.
+    """
+    if not candidate_message_ids:
+        return False
+
+    with sync_session_scope() as session:
+        seq = session.execute(
+            select(OutreachSequence).where(
+                OutreachSequence.message_id.in_(candidate_message_ids),
+                OutreachSequence.status == "sent",
+            )
+        ).scalars().first()
+        if not seq:
+            return False
+
+        lead = session.get(Lead, seq.lead_id)
+        if not lead:
+            return False
+
+        seq.status = "replied"
+        session.add(seq)
+
+        # Stop any other sequence rows still awaiting send for this lead.
+        others = session.execute(
+            select(OutreachSequence).where(
+                OutreachSequence.lead_id == lead.id,
+                OutreachSequence.id != seq.id,
+                OutreachSequence.status == "pending",
+            )
+        ).scalars().all()
+        for other in others:
+            other.status = "skipped"
+            session.add(other)
+
+        lead.status = "responded"
+        lead.next_follow_up_at = None
+        session.add(lead)
+
+        session.add(LeadEvent(
+            lead_id=lead.id,
+            event_type="replied",
+            payload={"step": seq.step_number, "from_email": from_email, "subject": subject},
+        ))
+
+        step_number = seq.step_number
+        business_name = lead.business_name
+        lead_id = str(lead.id)
+
+    log.info("reply_matched", lead_id=lead_id, step=step_number)
+
+    if settings.discord_alert_on_reply:
+        try:
+            from app.utils.discord import send_alert_sync
+            send_alert_sync(
+                content=(
+                    f"📩 **Reply received** — {business_name} replied "
+                    f"(step {step_number}). Subject: {subject or '(no subject)'}"
+                )
+            )
+        except Exception as exc:
+            log.warning("discord_alert_failed", error=str(exc))
+
+    return True
+
+
 @shared_task(bind=True, name="app.workers.outreach.tasks.check_replies")
 def check_replies(self) -> dict:
     """
@@ -321,11 +436,15 @@ def check_replies(self) -> dict:
     Matches In-Reply-To / References headers to our sent Message-IDs.
     On reply: update sequence + lead status, alert via Discord, cancel remaining sequence.
     """
+    import email as email_lib
+    from email.utils import getaddresses
+
     imap_host = getattr(settings, "imap_host", "imap.zoho.com")
     imap_user = getattr(settings, "imap_user", settings.smtp_user)
     imap_pass = getattr(settings, "imap_pass", settings.smtp_pass)
 
     replies_found = 0
+    matched = 0
 
     try:
         mail = imaplib.IMAP4_SSL(imap_host)
@@ -341,8 +460,25 @@ def check_replies(self) -> dict:
                 status, msg_data = mail.fetch(msg_id, "(RFC822)")
                 if status != "OK":
                     continue
+                raw = msg_data[0][1]
+                msg = email_lib.message_from_bytes(raw)
                 mail.store(msg_id, "+FLAGS", "\\Seen")
                 replies_found += 1
+
+                candidate_ids: set[str] = set()
+                in_reply_to = (msg.get("In-Reply-To") or "").strip()
+                if in_reply_to:
+                    candidate_ids.add(in_reply_to)
+                references = (msg.get("References") or "").strip()
+                if references:
+                    candidate_ids.update(references.split())
+
+                from_addrs = getaddresses(msg.get_all("From", []))
+                from_email = from_addrs[0][1] if from_addrs else None
+                subject = msg.get("Subject", "") or ""
+
+                if _handle_reply(candidate_ids, from_email, subject):
+                    matched += 1
             except Exception as e:
                 log.warning("reply_parse_error", msg_id=msg_id.decode(), error=str(e))
                 continue
@@ -353,9 +489,9 @@ def check_replies(self) -> dict:
         return {"status": "error", "error": str(e)}
 
     if replies_found > 0:
-        log.info("replies_detected", count=replies_found)
+        log.info("replies_detected", count=replies_found, matched=matched)
 
-    return {"status": "ok", "replies_found": replies_found}
+    return {"status": "ok", "replies_found": replies_found, "matched": matched}
 
 
 @shared_task(bind=True, name="app.workers.outreach.tasks.queue_leads_for_outreach")
@@ -382,3 +518,290 @@ def queue_leads_for_outreach(self, min_score: int = 40) -> dict:
 
         log.info("outreach_queue_updated", count=count)
         return {"status": "ok", "queued": count}
+
+
+# ── Follow-up Sequences ─────────────────────────────────────────────────────
+# Web-revamp leads only (mockup_status='approved'). Auto-sends (no operator
+# review) — same safety gates as send_email_sequence.
+#   Step 2 ~settings.follow_up_step2_gap_hours after step 1 sent
+#   Step 3 ~settings.follow_up_step3_gap_hours after step 2 sent, then the
+#   lead is marked 'no_response' and no further touches are sent.
+# A reply at any point (see check_replies) flips the lead to 'responded'
+# and removes it from these queries before its next touch is due.
+
+def _local_now() -> datetime:
+    """Return current wall-clock time in the configured business timezone (default SAST)."""
+    offset = timedelta(hours=getattr(settings, "follow_up_business_tz_offset_hours", 2))
+    return datetime.now(timezone.utc).astimezone(timezone(offset))
+
+
+def is_business_time(now: datetime | None = None) -> bool:
+    """True iff `now` (default: current time in configured TZ) falls on Mon-Fri [start, end)."""
+    if now is None:
+        now = _local_now()
+    start = getattr(settings, "follow_up_business_start_hour", 8)
+    end = getattr(settings, "follow_up_business_end_hour", 17)
+    if now.weekday() >= 5:  # Sat=5, Sun=6
+        return False
+    return start <= now.hour < end
+
+
+def _claim_lead(session, lead_id, ttl_seconds: int = 300) -> bool:
+    """Atomically claim `lead_id` for the next `ttl_seconds`. Returns True if
+    this caller now owns the claim, False if another worker holds it.
+
+    Uses a single UPDATE with RETURNING — no separate SELECT needed. The TTL
+    is a safety net for crashed workers; a normally-completing send lets the
+    claim expire naturally without an explicit release (avoids a second
+    round-trip and a race between "send succeeded" and "release claim")."""
+    from sqlalchemy import text as _sql_text
+    row = session.execute(
+        _sql_text(
+            "UPDATE leads "
+            "SET claimed_until = NOW() + (:ttl || ' seconds')::interval "
+            "WHERE id = :lid "
+            "  AND (claimed_until IS NULL OR claimed_until < NOW()) "
+            "RETURNING id"
+        ),
+        {"lid": lead_id, "ttl": ttl_seconds},
+    ).first()
+    return row is not None
+
+
+def compute_pacing_seconds(count: int) -> float:
+    """Return the number of seconds to sleep between sends for `count` candidates,
+    paced across today's business hours. With the default 08:00–17:00 window
+    (9 hours = 32400s):
+      count=15 → 2160s = 36 min between sends
+      count=10 → 3240s = 54 min
+      count=5  → 6480s = 1h48m
+      count=3  → 10800s = 3h
+      count=1  → 0s   (send immediately)
+    Result is clamped to follow_up_pace_min_interval_seconds."""
+    if count <= 1:
+        return 0.0
+    start = getattr(settings, "follow_up_business_start_hour", 8)
+    end = getattr(settings, "follow_up_business_end_hour", 17)
+    business_window_seconds = max(1, (end - start) * 3600)
+    raw = business_window_seconds / count
+    floor = max(0, getattr(settings, "follow_up_pace_min_interval_seconds", 30))
+    return max(raw, floor)
+
+
+@shared_task(bind=True, name="app.workers.outreach.tasks.send_follow_up_sequence")
+def send_follow_up_sequence(self, batch_size: int = 10) -> dict:
+    """Send step-2/step-3 follow-ups for web-revamp leads that haven't replied.
+
+    Hardened in Phase M (2026-08): when follow_up_business_hours_only is enabled
+    (default), refuse to send outside Mon-Fri [start_hour, end_hour) in the
+    configured timezone. Eligible candidates stay eligible — the next beat tick
+    that lands in business hours will fire them. No state mutation on skip.
+    """
+    if getattr(settings, "follow_up_business_hours_only", True) and not is_business_time():
+        local = _local_now()
+        log.info(
+            "followup_outside_business_hours",
+            local_iso=local.isoformat(),
+            weekday=local.weekday(),
+            hour=local.hour,
+        )
+        return {"status": "ok", "sent": 0, "reason": "outside_business_hours"}
+
+    daily_limit = settings.email_daily_limit or 5
+    send_mode = settings.send_mode or "test"
+    whitelist = {e.lower() for e in settings.test_email_whitelist}
+    step2_gap = timedelta(hours=settings.follow_up_step2_gap_hours or 96)
+    step3_gap = timedelta(hours=settings.follow_up_step3_gap_hours or 120)
+    now = datetime.now(timezone.utc)
+
+    with sync_session_scope() as session:
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        sent_today = session.execute(
+            select(func.count(OutreachSequence.id)).where(
+                OutreachSequence.status == "sent",
+                OutreachSequence.sent_at >= today_start,
+            )
+        ).scalar() or 0
+        remaining = max(0, daily_limit - sent_today)
+        if remaining == 0:
+            log.info("followup_daily_cap_reached", sent_today=sent_today, limit=daily_limit)
+            return {"status": "ok", "sent": 0, "reason": "daily_cap_reached"}
+
+        candidates: list[tuple] = []  # (lead_id, step_number, prior_message_id)
+
+        def _blocked(lead_id: uuid.UUID, next_steps: list[int]) -> bool:
+            return session.execute(
+                select(OutreachSequence.id).where(
+                    OutreachSequence.lead_id == lead_id,
+                    (OutreachSequence.status == "replied")
+                    | (OutreachSequence.step_number.in_(next_steps)),
+                )
+            ).first() is not None
+
+        def _latest_per_lead(rows: list[OutreachSequence]) -> list[OutreachSequence]:
+            """Collapse to (at most) one row per lead — the most recent send.
+
+            A lead can end up with more than one 'sent' row at a given step
+            (e.g. a dev/test lead re-sent manually several times before this
+            phase existed). Without this, each row would independently pass
+            the eligibility check below and generate a duplicate candidate
+            for the same lead in the same batch, since _blocked() only sees
+            DB state as of the top of this function — it can't see sends
+            that happen later in this same run.
+            """
+            latest: dict[uuid.UUID, OutreachSequence] = {}
+            for row in rows:
+                current = latest.get(row.lead_id)
+                if current is None or (row.sent_at or now) > (current.sent_at or now):
+                    latest[row.lead_id] = row
+            return list(latest.values())
+
+        seen_lead_ids: set[uuid.UUID] = set()
+
+        step1_rows = _latest_per_lead(session.execute(
+            select(OutreachSequence).where(
+                OutreachSequence.step_number == 1,
+                OutreachSequence.status == "sent",
+                OutreachSequence.sent_at <= now - step2_gap,
+            )
+        ).scalars().all())
+        for seq in step1_rows:
+            lead = session.get(Lead, seq.lead_id)
+            if not lead or lead.status != "contacted" or lead.mockup_status != "approved" or not lead.email:
+                continue
+            if lead.id in seen_lead_ids or _blocked(lead.id, [2, 3]):
+                continue
+            seen_lead_ids.add(lead.id)
+            candidates.append((lead.id, 2, seq.message_id))
+
+        step2_rows = _latest_per_lead(session.execute(
+            select(OutreachSequence).where(
+                OutreachSequence.step_number == 2,
+                OutreachSequence.status == "sent",
+                OutreachSequence.sent_at <= now - step3_gap,
+            )
+        ).scalars().all())
+        for seq in step2_rows:
+            lead = session.get(Lead, seq.lead_id)
+            if not lead or lead.status != "contacted" or lead.mockup_status != "approved" or not lead.email:
+                continue
+            if lead.id in seen_lead_ids or _blocked(lead.id, [3]):
+                continue
+            seen_lead_ids.add(lead.id)
+            candidates.append((lead.id, 3, seq.message_id))
+
+        candidates = candidates[: min(remaining, batch_size)]
+        # Within-day pacing: spread sends across today's business hours
+        # so a backlog doesn't fire as one burst. See compute_pacing_seconds.
+        if getattr(settings, "follow_up_pace_across_business_hours", True):
+            pacing_seconds = compute_pacing_seconds(len(candidates))
+        else:
+            pacing_seconds = 0.0
+        lead_ids = [c[0] for c in candidates]
+        leads_by_id = (
+            {l.id: l for l in session.execute(select(Lead).where(Lead.id.in_(lead_ids))).scalars().all()}
+            if lead_ids else {}
+        )
+
+    if not candidates:
+        log.info("followup_no_leads_ready", send_mode=send_mode)
+        return {"status": "ok", "sent": 0, "reason": "no_leads_ready"}
+
+    log.info(
+        "followup_sending_batch",
+        count=len(candidates),
+        send_mode=send_mode,
+        pacing_seconds=pacing_seconds,
+    )
+    sent = failed = 0
+
+    try:
+        smtp = _make_smtp()
+    except Exception as e:
+        log.error("smtp_connection_failed", error=str(e))
+        return {"status": "error", "error": f"smtp_failed: {e}"}
+
+    already_sent_lead_ids: set = set()  # belt-and-suspenders — see _latest_per_lead above
+    for lead_id, step_number, prior_message_id in candidates:
+        if lead_id in already_sent_lead_ids:
+            continue
+        lead = leads_by_id.get(lead_id)
+        if not lead or not lead.email:
+            continue
+
+        if send_mode == "test" and lead.email.lower() not in whitelist:
+            log.warning("smtp_test_mode_blocked", email=lead.email, lead_id=str(lead.id))
+            continue
+
+        # Atomic cross-worker claim — only one worker can hold this lead for the
+        # next ttl_seconds. Prevents two concurrent beat ticks from collapsing
+        # the within-day pacing to ~0. Migration 012 added the column.
+        with sync_session_scope() as claim_session:
+            if not _claim_lead(claim_session, lead_id):
+                log.info("followup_skip_already_claimed", lead_id=str(lead_id), step=step_number)
+                continue
+
+        try:
+            content = render_email_for_lead(lead, step=step_number)
+
+            msg = _build_email(
+                from_email=settings.smtp_from_email,
+                to_email=lead.email,
+                subject=content.subject,
+                html_body=content.body_html,
+                text_body=content.body_text,
+                in_reply_to=prior_message_id,
+            )
+
+            smtp.sendmail(settings.smtp_from_email, [lead.email], msg.as_string())
+
+            with sync_session_scope() as session:
+                lead_db = session.get(Lead, lead.id)
+                if lead_db:
+                    seq = OutreachSequence(
+                        lead_id=lead.id,
+                        channel="email",
+                        sequence_name=f"{content.template_key}_v1",
+                        step_number=step_number,
+                        subject=content.subject,
+                        message_body=content.body_text,
+                        status="sent",
+                        sent_at=datetime.now(timezone.utc),
+                        message_id=msg["Message-ID"],
+                    )
+                    lead_db.last_contacted_at = datetime.now(timezone.utc)
+                    if step_number >= 3:
+                        lead_db.status = "no_response"
+                        lead_db.next_follow_up_at = None
+                    else:
+                        lead_db.next_follow_up_at = datetime.now(timezone.utc) + step3_gap
+                    session.add(lead_db)
+                    session.add(seq)
+                    session.add(LeadEvent(
+                        lead_id=lead.id,
+                        # Distinct from send_email_sequence's "email_sent" so the
+                        # admin activity feed can render the follow-up icon
+                        # (EVENT_LABELS['follow_up_sent']) instead of a generic send.
+                        event_type="follow_up_sent",
+                        payload={"step": step_number, "template": content.template_key},
+                    ))
+
+            already_sent_lead_ids.add(lead_id)
+            sent += 1
+            log.info("followup_email_sent", lead_id=str(lead.id), step=step_number, send_mode=send_mode)
+            # Paced sleep — see compute_pacing_seconds(). Falls back to 2s when
+            # pacing is disabled so we still respect SMTP connection etiquette.
+            time.sleep(pacing_seconds or 2)
+
+        except Exception as e:
+            log.error("followup_send_failed", lead_id=str(lead.id), step=step_number, error=str(e))
+            failed += 1
+            continue
+
+    try:
+        smtp.quit()
+    except Exception:
+        pass
+
+    log.info("followup_batch_done", sent=sent, failed=failed, send_mode=send_mode)
+    return {"status": "ok", "sent": sent, "failed": failed}

@@ -229,6 +229,7 @@ def generate_pdf(
         "generated_date":    datetime.now(timezone.utc).strftime("%d %B %Y"),
         "platform_display":  PLATFORM_DISPLAY_NAMES.get(platform or "", platform or "Unknown"),
         "platform_note":     PLATFORM_NOTES.get(platform or "", ""),
+        "website_platform":  platform or "",          # raw value for platform-aware copy
         "copyright_year":    copyright_year,
         "copyright_age":     copyright_age,
         "screenshot_path":   screenshot_path,
@@ -254,6 +255,8 @@ def generate_pdf(
         "google_rating":     google_rating,
         "google_review_count": google_review_count,
         "business_type":     business_type,
+        "cipc_reg_number":   "2026/055613/07",   # CIPC — Client Compass Digital Solutions (Pty) Ltd
+        "vat_number":        "",                  # not VAT registered yet
     }
 
     # QR code for the live mockup (if available). Failures are silent —
