@@ -19,7 +19,6 @@ Format (post 77 onwards):
     ### Caption (primary)      → caption_fb
     ### Caption (alt — short)  → caption_ig
     ### Image prompt
-    ### Stock photo search     → bullet lines → search_queries
     ### First comment          → incl. CTA URL
 
 Tolerant of em-dash/en-dash/hyphen variants in headings and of trailing
@@ -29,7 +28,7 @@ the caller skips the file without inserting.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -46,7 +45,6 @@ _ANGLE_HEADING_RE = re.compile(r"^angle\s*:\s*(.+)$", re.IGNORECASE)
 _SUGGESTED_RE = re.compile(r"^\*\*\s*Suggested posting time\s*:\*\*\s*(.+?)\s*$", re.IGNORECASE)
 _SCHEDULE_RE = re.compile(r"^\*\*\s*Schedule\s*\(SAST\)\s*:\*\*\s*(.+?)\s*$", re.IGNORECASE)
 _SCHEDULE_DT_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})")
-_BULLET_RE = re.compile(r"^[-*•]\s+(.+?)\s*$")
 _DASHES_RE = re.compile(r"[—–−]")
 
 
@@ -82,7 +80,6 @@ class ParsedPost:
     image_prompt: str | None = None
     suggested_time_note: str | None = None
     scheduled_at: datetime | None = None
-    search_queries: list[str] = field(default_factory=list)
 
 
 def parse_post_text(text: str, source_file: str) -> ParsedPost | None:
@@ -142,16 +139,6 @@ def parse_post_text(text: str, source_file: str) -> ParsedPost | None:
         )
         return None
 
-    queries: list[str] = []
-    stock_body = _section("stock photo search")
-    if stock_body:
-        for line in stock_body.splitlines():
-            bm = _BULLET_RE.match(line.strip())
-            if bm:
-                queries.append(bm.group(1).strip())
-    if not queries and angle:
-        queries = [angle]
-
     return ParsedPost(
         source_file=source_file,
         post_number=post_number,
@@ -162,7 +149,6 @@ def parse_post_text(text: str, source_file: str) -> ParsedPost | None:
         image_prompt=_section("image prompt"),
         suggested_time_note=suggested_time_note,
         scheduled_at=_parse_schedule(schedule_raw),
-        search_queries=queries,
     )
 
 

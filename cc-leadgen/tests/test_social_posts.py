@@ -88,14 +88,12 @@ def test_parser_full_fixture():
     assert p.image_prompt.startswith("Flat-design illustration")
     assert p.suggested_time_note.startswith("Thursday 1 Oct")
     assert p.scheduled_at == datetime(2026, 10, 1, 20, 0, tzinfo=parser.SAST)
-    assert p.search_queries == ["tradesman laptop evening", "small business owner night"]
 
 
-def test_parser_missing_new_sections_falls_back_to_angle():
+def test_parser_missing_new_sections_tolerated():
     p = _parse(POST77_BODY)
     assert p is not None
     assert p.scheduled_at is None
-    assert p.search_queries == [p.angle]
 
 
 def test_parser_hyphen_alt_caption_variant():
@@ -115,7 +113,6 @@ def test_parser_trailing_whitespace():
     p = _parse(messy)
     assert p is not None
     assert p.scheduled_at == datetime(2026, 10, 1, 20, 0, tzinfo=parser.SAST)
-    assert p.search_queries == ["tradesman laptop evening", "small business owner night"]
 
 
 def test_parser_unparseable_schedule_is_none():
@@ -179,25 +176,10 @@ class FakeRepo:
             first_comment=post.first_comment, image_prompt=post.image_prompt,
             suggested_time_note=post.suggested_time_note,
             scheduled_at=post.scheduled_at,
-            search_queries=list(post.search_queries),
             image_data=None, status="pending_review", approved_at=None,
         )
         self.rows[row["id"]] = row
         return row["id"]
-
-    def save_candidates(self, post_id, candidates, queries=None):
-        row = self.get(post_id)
-        row["photo_candidates"] = list(candidates)
-        if queries is not None:
-            row["search_queries"] = list(queries)
-
-    def replace_candidates(self, post_id, query, candidates):
-        row = self.rows.get(str(post_id))
-        if not row or row["status"] not in ("pending_review", "approved"):
-            return False
-        row["photo_candidates"] = list(candidates)
-        row["search_queries"].append(query)
-        return True
 
     def fail_stuck_publishing(self, stuck_after):
         out = []
@@ -308,7 +290,6 @@ def _settings(**over):
         social_missed_window_hours=6,
         social_ingest_max_age_days=10,
         social_posts_dir="/vault/posts",
-        pexels_api_key="pexels-key",
         smtp_host="", smtp_port=587, smtp_user="", smtp_pass="",
         smtp_from_email="", smtp_from_name="Client Compass",
         ops_alert_email="info@clientcompass.co.za",
@@ -472,16 +453,12 @@ def test_publish_no_image_not_due():
 
 # ── Ingest tests ──────────────────────────────────────────────────────────────
 
-def test_ingest_inserts_and_fetches_candidates(tmp_path, monkeypatch):
+def test_ingest_inserts(tmp_path):
     (tmp_path / "social-media-post-77-second-shift.md").write_text(POST77_FULL)
     old = tmp_path / "social-media-post-01-old.md"
     old.write_text(POST77_FULL)
     old_ts = (_now() - timedelta(days=30)).timestamp()
     os.utime(old, (old_ts, old_ts))
-
-    candidates = [{"id": 1, "original": "https://images.pexels.com/x"}]
-    monkeypatch.setattr(social_worker.pexels, "gather_candidates",
-                        lambda queries, **kw: candidates)
 
     repo = FakeRepo()
     r = social_worker.ingest_social_posts(repo=repo, posts_dir=str(tmp_path))
@@ -489,33 +466,8 @@ def test_ingest_inserts_and_fetches_candidates(tmp_path, monkeypatch):
     row = repo.rows[list(repo.rows)[0]]
     assert row["source_file"] == "social-media-post-77-second-shift.md"
     assert row["status"] == "pending_review"
-    assert row["photo_candidates"] == candidates
-    assert row["search_queries"] == ["tradesman laptop evening",
-                                     "small business owner night"]
+    assert row["photo_candidates"] == []
 
     # Second run: same file is a no-op (ON CONFLICT DO NOTHING)
     r2 = social_worker.ingest_social_posts(repo=repo, posts_dir=str(tmp_path))
     assert r2["inserted"] == 0
-
-
-def test_ingest_pexels_failure_keeps_row(tmp_path, monkeypatch):
-    (tmp_path / "social-media-post-77-second-shift.md").write_text(POST77_BODY)
-
-    def _boom(*a, **kw):
-        raise RuntimeError("pexels down")
-
-    # Per-query failure — real gather_candidates swallows it → empty candidates
-    monkeypatch.setattr(social_worker.pexels, "search_photos", _boom)
-    repo = FakeRepo()
-    r = social_worker.ingest_social_posts(repo=repo, posts_dir=str(tmp_path))
-    assert r["inserted"] == 1
-    row = repo.rows[list(repo.rows)[0]]
-    assert row["status"] == "pending_review"
-    assert row["photo_candidates"] == []
-
-    # Even a total gather failure keeps the row
-    repo2 = FakeRepo()
-    monkeypatch.setattr(social_worker.pexels, "gather_candidates", _boom)
-    r2 = social_worker.ingest_social_posts(repo=repo2, posts_dir=str(tmp_path))
-    assert r2["inserted"] == 1
-    assert repo2.rows[list(repo2.rows)[0]]["photo_candidates"] == []

@@ -10,7 +10,6 @@ repo object entirely.
 """
 from __future__ import annotations
 
-import json
 from contextlib import contextmanager
 from datetime import timedelta
 from urllib.parse import unquote, urlparse
@@ -74,8 +73,8 @@ class SocialPostRepo:
                 INSERT INTO admin_crm.social_posts (
                     source_file, post_number, angle,
                     caption_fb, caption_ig, first_comment, image_prompt,
-                    suggested_time_note, scheduled_at, search_queries
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    suggested_time_note, scheduled_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (source_file) DO NOTHING
                 RETURNING id
                 """,
@@ -83,43 +82,11 @@ class SocialPostRepo:
                     post.source_file, post.post_number, post.angle,
                     post.caption_fb, post.caption_ig, post.first_comment,
                     post.image_prompt, post.suggested_time_note,
-                    post.scheduled_at, list(post.search_queries),
+                    post.scheduled_at,
                 ),
             )
             row = cur.fetchone()
             return str(row["id"]) if row else None
-
-    def save_candidates(self, post_id: str, candidates: list[dict],
-                        queries: list[str] | None = None) -> None:
-        """Store Pexels candidates + the queries that produced them (ingest)."""
-        with self._tx() as cur:
-            cur.execute(
-                """
-                UPDATE admin_crm.social_posts
-                SET photo_candidates = %s::jsonb,
-                    search_queries = %s,
-                    updated_at = NOW()
-                WHERE id = %s
-                """,
-                (json.dumps(candidates), list(queries or []), post_id),
-            )
-
-    def replace_candidates(self, post_id: str, query: str,
-                           candidates: list[dict]) -> bool:
-        """Operator re-search: replace candidates, append query. Editable rows only."""
-        with self._tx() as cur:
-            cur.execute(
-                """
-                UPDATE admin_crm.social_posts
-                SET photo_candidates = %s::jsonb,
-                    search_queries = array_append(search_queries, %s),
-                    updated_at = NOW()
-                WHERE id = %s AND status IN ('pending_review', 'approved')
-                RETURNING id
-                """,
-                (json.dumps(candidates), query, post_id),
-            )
-            return cur.fetchone() is not None
 
     # ── Publish ───────────────────────────────────────────────────────
 

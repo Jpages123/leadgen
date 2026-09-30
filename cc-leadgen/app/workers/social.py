@@ -6,8 +6,8 @@ Two Celery tasks (beat-driven, see app.workers.celery_app):
       Scan settings.social_posts_dir (Obsidian vault Posts dir, mounted ro at
       /vault/posts) for social-media-post-*.md files modified within
       social_ingest_max_age_days, parse them, and INSERT new rows into
-      admin_crm.social_posts (ON CONFLICT source_file DO NOTHING). New rows
-      then get Pexels photo_candidates (metadata only — no downloads).
+      admin_crm.social_posts (ON CONFLICT source_file DO NOTHING). The
+      operator uploads the image manually in the portal Social Queue.
 
   - publish_due_social_posts (every 5 min)
       Guards first: rows stuck in 'publishing' >30min → failed; approved rows
@@ -35,7 +35,7 @@ import httpx
 from celery import shared_task
 
 from app.config import get_settings
-from app.social import meta, parser, pexels
+from app.social import meta, parser
 from app.social.repo import SocialPostRepo
 from app.utils.logger import get_logger
 
@@ -118,21 +118,8 @@ def ingest_social_posts(self, repo=None, posts_dir: str | None = None) -> dict:
         if not new_id:
             continue  # already ingested
         inserted += 1
-
-        # Pexels failure → row stays inserted with empty candidates
-        try:
-            candidates = pexels.gather_candidates(parsed.search_queries)
-        except Exception as exc:
-            log.warning("social_pexels_gather_failed", file=f.name,
-                        error=str(exc)[:200])
-            candidates = []
-        if candidates:
-            try:
-                repo.save_candidates(new_id, candidates, parsed.search_queries)
-            except Exception as exc:
-                log.error("social_candidates_save_failed", id=new_id, error=str(exc)[:300])
         log.info("social_post_ingested", id=new_id, file=f.name,
-                 post_number=parsed.post_number, candidates=len(candidates))
+                 post_number=parsed.post_number)
 
     log.info("social_ingest_done", scanned=scanned, inserted=inserted)
     return {"status": "ok", "scanned": scanned, "inserted": inserted}
