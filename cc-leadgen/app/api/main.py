@@ -42,8 +42,9 @@ app.add_middleware(
 )
 
 # Import and register routes after app creation to avoid circular imports
-from app.api import health, metrics, mockup, pages, webhooks  # noqa: E402, F401
+from app.api import health, metrics, mockup, pages, social, webhooks  # noqa: E402, F401
 
 app.include_router(pages.router)
 app.include_router(mockup.router)
 app.include_router(webhooks.router)
+app.include_router(social.router)

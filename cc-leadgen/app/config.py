@@ -146,6 +146,23 @@ class Settings(BaseSettings):
     # ── Stock image fallback ──────────────────────────────────────────
     pexels_api_key: str = ""
 
+    # ── Social posts pipeline (vault → admin_crm.social_posts → FB/IG) ──
+    # Vault Posts dir mounted read-only in the worker container.
+    social_posts_dir: str = "/vault/posts"
+    social_ingest_max_age_days: int = 10
+    # Public base URL where chosen post images are served (login-portal
+    # serves /social-media/<id>.jpg from admin_crm.social_posts.image_data).
+    social_image_base_url: str = "https://login.clientcompass.co.za/social-media"
+    # Meta Graph credentials — leave empty to disable publishing (the beat
+    # task then logs social_publish_not_configured and changes nothing).
+    meta_page_id: str = Field(default="", validation_alias="META_PAGE_ID")
+    meta_ig_user_id: str = Field(default="", validation_alias="META_IG_USER_ID")
+    meta_page_access_token: str = Field(default="", validation_alias="META_PAGE_ACCESS_TOKEN")
+    # Approved posts whose slot passed more than this many hours ago are
+    # marked failed (never published) — the operator must retry explicitly.
+    social_missed_window_hours: int = 6
+    ops_alert_email: str = "info@clientcompass.co.za"
+
     # ── Unsubscribe JWT ───────────────────────────────────────────────
     unsubscribe_secret: str = "change-me"
 

@@ -27,6 +27,7 @@ celery_app = Celery(
         "app.workers.mockup_approval_sync",
         "app.workers.mockup_regen",
         "app.workers.email_draft",
+        "app.workers.social",
     ],
 )
 
@@ -91,6 +92,16 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.mockup_regen.tasks.retry_failed_mockups",
         "schedule": crontab(minute="*/30"),
         "kwargs": {"batch_size": 20},
+    },
+    # Social pipeline — ingest new vault posts + Pexels candidates (every 15 min)
+    "social-ingest": {
+        "task": "app.workers.social.tasks.ingest_social_posts",
+        "schedule": crontab(minute="*/15"),
+    },
+    # Social pipeline — publish approved+due posts to FB/IG (every 5 min)
+    "social-publish": {
+        "task": "app.workers.social.tasks.publish_due_social_posts",
+        "schedule": crontab(minute="*/5"),
     },
 }
 celery_app.conf.task_routes = {
