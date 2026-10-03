@@ -60,7 +60,6 @@ services:
       PI_CODING_AGENT_DIR: /app/.pi-docker/agent
       SMTP_HOST: smtp.zoho.com
       SMTP_USER: outreach@clientcompass.co.za
-      SMTP_PASS: xSBicRfhdLQ9
       SMTP_FROM_EMAIL: outreach@clientcompass.co.za
     command: >-
       sh -c "/app/.venv/bin/python -m playwright install chromium &&
@@ -84,9 +83,6 @@ services:
       # tricks). Now under the templates/ dir that this0ne owns outright,
       # so the next template edit is just a file save — no chmod dance.
       - /home/this0ne/installedApps/leadgen/templates/cc-site-template:/opt/templates/cc-site-template:ro
-      # Obsidian vault social posts (Syncthing-synced) — read-only input for
-      # the social-post ingest task (settings.social_posts_dir = /vault/posts).
-      - "/home/this0ne/installedApps/obsidian/Mind-Palace/Business/Client Compass/Posts:/vault/posts:ro"
 
   beat:
     build: .
