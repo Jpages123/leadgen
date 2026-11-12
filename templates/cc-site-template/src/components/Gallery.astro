@@ -1,0 +1,42 @@
+---
+import { client } from '../config/client';
+import { brand } from '../config/brand';
+
+// Hide the whole section (heading included) when there are no real gallery
+// photos, rather than rendering an empty grid under a floating "Gallery"
+// heading. Pi is instructed to leave client.gallery empty/short rather than
+// padding it with duplicate images when scraped photo assets are scarce.
+const hasGallery = Array.isArray(client.gallery) && client.gallery.length > 0;
+---
+
+{hasGallery && (
+<section id="gallery" class="section-pad bg-white">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+
+    <div class="text-center mb-14">
+      <p class="text-sm font-semibold uppercase tracking-widest mb-3" style={`color: ${brand.accent}`}>
+        Our Work
+      </p>
+      <h2 class="font-heading text-5xl sm:text-6xl text-gray-900">
+        Gallery
+      </h2>
+    </div>
+
+    <!-- Masonry-style grid: 2-col mobile, 3-col desktop with featured first slot -->
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+      {client.gallery.map((item, i) => (
+        <div
+          class={`overflow-hidden rounded-lg bg-gray-100 ${i === 0 ? 'col-span-2 md:col-span-2 md:row-span-2' : ''}`}
+        >
+          <img
+            src={item.src}
+            alt={item.alt}
+            class={`w-full object-cover hover:scale-105 transition-transform duration-500 ${i === 0 ? 'aspect-video md:h-full md:aspect-auto' : 'aspect-square'}`}
+            loading="lazy"
+          />
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+)}

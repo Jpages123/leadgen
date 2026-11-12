@@ -1,0 +1,34 @@
+---
+import Layout from '../layouts/Layout.astro';
+import HeroTrades from '../components/HeroTrades.astro';
+import HeroCreative from '../components/HeroCreative.astro';
+import HeroGeneral from '../components/HeroGeneral.astro';
+import TrustBar from '../components/TrustBar.astro';
+import Services from '../components/Services.astro';
+import About from '../components/About.astro';
+import Testimonials from '../components/Testimonials.astro';
+import HowItWorks from '../components/HowItWorks.astro';
+import Gallery from '../components/Gallery.astro';
+import ContactSection from '../components/ContactSection.astro';
+import { brand } from '../config/brand';
+
+// Template variant chosen by Pi (app/utils/template_analyzer.py).
+// Falls back to 'general' if brand.template is missing or unknown.
+//   trades    - professional calling-card style (plumbers, electricians)
+//   creative  - gallery-first, minimal text (photography, events)
+//   general   - balanced default (everything else)
+const templateName = brand.template || 'general';
+---
+
+<Layout>
+  {templateName === 'creative' && <HeroCreative />}
+  {templateName === 'trades' && <HeroTrades />}
+  {templateName === 'general' && <HeroGeneral />}
+  <TrustBar />
+  <Services />
+  <HowItWorks />
+  <About />
+  <Testimonials />
+  <Gallery />
+  <ContactSection />
+</Layout>

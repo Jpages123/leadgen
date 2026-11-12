@@ -1,0 +1,41 @@
+---
+// HowItWorks - 4-step process section for service businesses.
+// Drives from brand.processSteps (array of {step, title, description}).
+// Hidden if no steps provided.
+import { brand } from '../config/brand';
+
+const processSteps = brand.processSteps ?? [];
+---
+
+{processSteps.length > 0 && (
+<section class="section-pad" style={`background-color: ${brand.surfaceAlt}`}>
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="text-center mb-14">
+      <p class="text-sm font-semibold uppercase tracking-widest mb-3" style={`color: ${brand.accent}`}>
+        How It Works
+      </p>
+      <h2 class="font-heading text-5xl sm:text-6xl" style={`color: ${brand.darkMode ? '#ffffff' : '#111827'}`}>
+        {brand.processHeadline ?? 'From Enquiry to Event'}
+      </h2>
+      {brand.processSubtext && (
+        <p class="max-w-2xl mx-auto mt-4" style={`color: ${brand.darkMode ? '#9ca3af' : '#6b7280'}`}>{brand.processSubtext}</p>
+      )}
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      {processSteps.map(step => (
+        <div class="relative bg-white rounded-lg p-8 border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+          <div
+            class="absolute -top-4 -left-2 w-10 h-10 rounded-full text-white font-heading text-lg flex items-center justify-center shadow-md"
+            style={`background-color: ${brand.accent}`}
+          >
+            {step.step}
+          </div>
+          <h3 class="font-heading text-xl text-gray-900 mt-2 mb-3">{step.title}</h3>
+          <p class="text-gray-500 text-sm leading-relaxed">{step.description}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+)}

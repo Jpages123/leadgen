@@ -1,0 +1,106 @@
+---
+import '../styles/global.css';
+import { client } from '../config/client';
+import { brand } from '../config/brand';
+import Nav from '../components/Nav.astro';
+import WhatsAppButton from '../components/WhatsAppButton.astro';
+import Footer from '../components/Footer.astro';
+
+interface Props {
+  title?: string;
+  description?: string;
+  ogImage?: string;
+}
+
+const {
+  title = client.seo.title,
+  description = client.seo.description,
+  ogImage = client.seo.ogImage,
+} = Astro.props;
+
+const canonicalUrl = new URL(Astro.url.pathname, `https://${client.domain}`);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content={brand.heroDark} />
+    <link rel="icon" type="image/png" href="/images/favicon.png" />
+    <link rel="canonical" href={canonicalUrl} />
+
+    <!-- SEO -->
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="robots" content="index, follow" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={`https://${client.domain}${ogImage}`} />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={`https://${client.domain}${ogImage}`} />
+
+    <!-- Fonts: self-hosted via Google Fonts CSS (no tracking) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href={`https://fonts.googleapis.com/css2?family=${brand.fontHeading.replace(' ', '+')}:wght@400;500;600;700&family=${brand.fontBody.replace(' ', '+')}:wght@400;500;600;700&display=swap`}
+      rel="stylesheet"
+    />
+
+    <!-- Inject brand CSS variables -->
+    <style define:vars={{
+      'brand-accent': brand.accent,
+      'brand-hero-dark': brand.heroDark,
+      'brand-footer-dark': brand.footerDark,
+    }}>
+      :root {
+        --brand-accent: var(--brand-accent);
+        --brand-hero-dark: var(--brand-hero-dark);
+        --brand-footer-dark: var(--brand-footer-dark);
+      }
+    </style>
+
+    <!-- Cloudflare Web Analytics (optional) -->
+    {client.cloudflareAnalyticsToken && (
+      <script
+        defer
+        src="https://static.cloudflareinsights.com/beacon.min.js"
+        data-cf-beacon={`{"token": "${client.cloudflareAnalyticsToken}"}`}
+      />
+    )}
+
+    <!-- JSON-LD: Local Business structured data -->
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "LocalBusiness",
+      "name": client.name,
+      "description": client.description,
+      "url": `https://${client.domain}`,
+      "telephone": client.phone,
+      "email": client.email,
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": client.address,
+        "addressCountry": "ZA"
+      },
+      "image": `https://${client.domain}${ogImage}`,
+    })} />
+  </head>
+  <body>
+    <Nav />
+    <main>
+      <slot />
+    </main>
+    <WhatsAppButton />
+    <Footer />
+  </body>
+</html>

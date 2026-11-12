@@ -1,0 +1,21 @@
+---
+import { client } from '../config/client';
+import { brand } from '../config/brand';
+---
+
+<section style={`background-color: ${brand.accent}`}>
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-8">
+      {client.stats.map(stat => (
+        <div class="text-center">
+          <div class="font-heading text-4xl sm:text-5xl text-white leading-none mb-1">
+            {stat.value}
+          </div>
+          <div class="text-white/80 text-sm font-medium uppercase tracking-wider">
+            {stat.label}
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>

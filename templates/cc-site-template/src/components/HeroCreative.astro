@@ -1,0 +1,141 @@
+---
+import { client } from '../config/client';
+import { brand } from '../config/brand';
+
+// HeroCreative - for photography, event planning, videography.
+// Used when brand.template === 'creative' (chosen by Pi).
+// - Full-bleed hero image
+// - Minimal text overlay (business name + tagline + cta)
+// - Optional watermark (brand.imageWatermark)
+// - Dark mode by default (Pi can override via brand.darkMode)
+---
+
+<section
+  class="relative min-h-screen flex items-center justify-center overflow-hidden"
+  style={`background-color: ${brand.heroDark}`}
+>
+  <!-- Background image with overlay -->
+  <div class="absolute inset-0">
+    <img
+      src={brand.heroImage}
+      alt={`${client.name} - ${client.tagline}`}
+      class="w-full h-full object-cover"
+      style={`opacity: ${(100 - (brand.heroOverlayOpacity || 50)) / 100}`}
+      loading="eager"
+      fetchpriority="high"
+    />
+    <!-- Gradient overlay: Pi chooses opacity via brand.heroOverlayOpacity (25..70) -->
+    <div
+      class="absolute inset-0"
+      style={`background: linear-gradient(to bottom, rgba(0,0,0,${(brand.heroOverlayOpacity || 50) / 100 * 0.3}), rgba(0,0,0,${(brand.heroOverlayOpacity || 50) / 100 * 0.7}))`}
+    ></div>
+  </div>
+
+  <!-- Minimal text overlay - centred, elegant -->
+  <div class="relative z-10 max-w-4xl mx-auto px-6 pt-24 pb-20 text-center">
+    <!-- Eyebrow - tagline appears as small marker above the headline -->
+    <p class="text-xs sm:text-sm font-medium tracking-[0.3em] uppercase text-white/80 mb-6">
+      {client.tagline}
+    </p>
+
+    <!-- Business name in elegant Playfair Display -->
+    <h1 class="font-heading text-5xl sm:text-6xl md:text-7xl lg:text-8xl text-white leading-[1.05] mb-8">
+      {client.name}
+    </h1>
+
+    <!-- Subtle decorative rule -->
+    <div class="flex items-center justify-center gap-3 mb-8">
+      <span class="h-px w-12 bg-white/40"></span>
+      <span class="w-1.5 h-1.5 rounded-full" style={`background-color: ${brand.accent}`}></span>
+      <span class="h-px w-12 bg-white/40"></span>
+    </div>
+
+    <!-- Short subline - drawn from business description -->
+    <p class="text-base sm:text-lg text-white/75 font-light max-w-xl mx-auto mb-10 leading-relaxed">
+      {client.description}
+    </p>
+
+    <!-- Primary CTA - Pi chose via brand.ctaPriority -->
+    <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+      {brand.ctaPriority === 'book' && (
+        <a
+          href="/contact"
+          class="px-10 py-4 text-sm font-semibold tracking-widest uppercase text-white transition-all duration-300 hover:brightness-110 active:scale-95"
+          style={`background-color: ${brand.accent}`}
+        >
+          Let's Create Together
+        </a>
+      )}
+      {brand.ctaPriority === 'whatsapp' && client.whatsapp && (
+        <a
+          href={`https://wa.me/${client.whatsapp}`}
+          class="px-10 py-4 text-sm font-semibold tracking-widest uppercase text-white transition-all duration-300 hover:brightness-110 active:scale-95"
+          style={`background-color: ${brand.accent}`}
+        >
+          WhatsApp Us
+        </a>
+      )}
+      {brand.ctaPriority === 'phone' && client.phone && (
+        <a
+          href={`tel:${client.phone}`}
+          class="px-10 py-4 text-sm font-semibold tracking-widest uppercase text-white transition-all duration-300 hover:brightness-110 active:scale-95"
+          style={`background-color: ${brand.accent}`}
+        >
+          Call {client.phone}
+        </a>
+      )}
+      {brand.ctaPriority === 'contact' && (
+        <a
+          href="/contact"
+          class="px-10 py-4 text-sm font-semibold tracking-widest uppercase text-white transition-all duration-300 hover:brightness-110 active:scale-95"
+          style={`background-color: ${brand.accent}`}
+        >
+          Get In Touch
+        </a>
+      )}
+    </div>
+
+    <!-- Compact trust strip (creative template - what makes us great) -->
+    {brand.trustBadges && brand.trustBadges.length > 0 && (
+      <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mt-12 text-white/55 text-xs sm:text-sm tracking-wide">
+        {brand.trustBadges.slice(0, 3).map(badge => (
+          <span class="flex items-center gap-2">
+            <span class="w-1 h-1 rounded-full" style={`background-color: ${brand.accent}`}></span>
+            {badge}
+          </span>
+        ))}
+      </div>
+    )}
+
+    <!-- Service area strip (data-driven from brand.serviceAreas) -->
+    {brand.serviceAreas && brand.serviceAreas.length > 0 && (
+      <div class="mt-10 flex flex-col items-center">
+        <p class="text-white/50 text-xs tracking-[0.25em] uppercase mb-3">Servicing</p>
+        <div class="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 max-w-2xl mx-auto">
+          {brand.serviceAreas.map((area, i) => (
+            <span class="flex items-center text-white/85 text-sm">
+              <span>{area}</span>
+              {i < brand.serviceAreas.length - 1 && (
+                <span class="ml-3 text-white/30">·</span>
+              )}
+            </span>
+          ))}
+        </div>
+      </div>
+    )}
+  </div>
+
+  <!-- Subtle watermark - only shown if Pi enabled it -->
+  {brand.imageWatermark && (
+    <div class="absolute bottom-4 right-4 text-white/30 text-[10px] tracking-[0.2em] uppercase font-light">
+      {client.name} &copy; {new Date().getFullYear()}
+    </div>
+  )}
+
+  <!-- Scroll indicator -->
+  <div class="absolute bottom-8 left-1/2 -translate-x-1/2 animate-bounce">
+    <svg class="w-5 h-5 text-white/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+    </svg>
+  </div>
+</section>

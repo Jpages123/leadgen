@@ -1,0 +1,29 @@
+---
+import Layout from '../layouts/Layout.astro';
+import ContactSection from '../components/ContactSection.astro';
+import { client } from '../config/client';
+import { brand } from '../config/brand';
+---
+
+<Layout
+  title={`Contact Us | ${client.name}`}
+  description={`Get in touch with ${client.name}. Call, WhatsApp or send a message.`}
+>
+
+  <!-- Page hero -->
+  <section
+    class="pt-32 pb-20 text-white text-center"
+    style={`background-color: ${brand.heroDark}`}
+  >
+    <div class="max-w-3xl mx-auto px-4">
+      <p class="text-sm font-semibold uppercase tracking-widest mb-4" style={`color: ${brand.accent}`}>
+        Reach Out
+      </p>
+      <h1 class="font-heading text-6xl sm:text-7xl text-white mb-4">Contact Us</h1>
+      <p class="text-gray-400 text-lg">We respond fast — usually within the hour.</p>
+    </div>
+  </section>
+
+  <ContactSection />
+
+</Layout>

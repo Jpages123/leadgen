@@ -1,0 +1,73 @@
+---
+import { client } from '../config/client';
+import { brand } from '../config/brand';
+
+const icons: Record<string, string> = {
+  bolt: `<path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />`,
+  flame: `<path stroke-linecap="round" stroke-linejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" /><path stroke-linecap="round" stroke-linejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" />`,
+  droplet: `<path stroke-linecap="round" stroke-linejoin="round" d="M12 3c-4.444 4.667-6 7.833-6 10a6 6 0 0012 0c0-2.167-1.556-5.333-6-10z" />`,
+  home: `<path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />`,
+  building: `<path stroke-linecap="round" stroke-linejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" />`,
+  search: `<path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 15.803 7.5 7.5 0 0015.803 15.803z" />`,
+  wrench: `<path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z" />`,
+};
+---
+
+<section id="services" class="section-pad" style={`background-color: ${brand.surfaceAlt}`}>
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+
+    <!-- Section header -->
+    <div class="text-center mb-14">
+      <p class="text-sm font-semibold uppercase tracking-widest mb-3" style={`color: ${brand.accent}`}>
+        What We Do
+      </p>
+      <h2 class="font-heading text-5xl sm:text-6xl" style={`color: ${brand.darkMode ? '#ffffff' : '#111827'}`}>
+        Our Services
+      </h2>
+    </div>
+
+    <!-- Service cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      {client.services.map(service => (
+        <div class="group bg-white rounded-lg p-8 border border-gray-100 hover:border-transparent hover:shadow-xl transition-all duration-300">
+          <!-- Icon -->
+          <div
+            class="w-12 h-12 rounded-lg flex items-center justify-center mb-5 transition-colors duration-300"
+            style={`background-color: ${brand.accent}20`}
+          >
+            <svg
+              class="w-6 h-6 transition-colors duration-300"
+              style={`color: ${brand.accent}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="1.5"
+              set:html={icons[service.icon] ?? icons.wrench}
+            />
+          </div>
+
+          <h3 class="font-heading text-2xl text-gray-900 mb-3">
+            {service.title}
+          </h3>
+          <p class="text-gray-500 text-sm leading-relaxed">
+            {service.description}
+          </p>
+        </div>
+      ))}
+    </div>
+
+    <!-- Bottom CTA -->
+    <div class="text-center mt-12">
+      <a
+        href="/contact"
+        class="inline-flex items-center gap-2 px-8 py-4 font-bold text-white rounded-sm transition-all duration-200 hover:brightness-110"
+        style={`background-color: ${brand.accent}`}
+      >
+        Get a Free Quote
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+        </svg>
+      </a>
+    </div>
+  </div>
+</section>

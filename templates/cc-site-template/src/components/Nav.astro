@@ -1,0 +1,135 @@
+---
+import { client } from "../config/client";
+import { brand } from "../config/brand";
+
+// Header / Nav. Session 22 (2026-08-05): logo image replaced with a
+// coloured text wordmark — many event-hire clients (e.g. Discount Tents)
+// don't have polished logos, and a text wordmark in the brand accent
+// reads more cleanly than a low-res logo image. The img fallback is
+// retained as a graceful-degradation path if a future client does
+// supply a real logo: the JS still swaps to text on img error.
+
+const hasGallery = Array.isArray(client.gallery) && client.gallery.length > 0;
+
+const navLinks = [
+  { label: "Home", href: "/" },
+  { label: "Services", href: "/#services" },
+  { label: "About", href: "/about" },
+  ...(hasGallery ? [{ label: "Gallery", href: "/#gallery" }] : []),
+  { label: "Contact", href: "/contact" },
+];
+---
+
+<header class="fixed top-0 left-0 right-0 z-50 bg-black/80 backdrop-blur-md border-b border-white/10">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="flex items-center justify-between h-16">
+
+      <!-- Brand wordmark (replaces logo image) -->
+      <a href="/" class="flex items-center shrink-0" aria-label={client.name}>
+        <img
+          src={brand.logoPath}
+          alt=""
+          aria-hidden="true"
+          class="logo-img h-10 w-auto hidden"
+        />
+        <span
+          class="logo-fallback font-heading text-xl sm:text-2xl tracking-wider font-semibold"
+          style={`color: ${brand.accent}`}
+        >
+          {client.name}
+        </span>
+      </a>
+
+      <!-- Desktop nav -->
+      <nav class="hidden md:flex items-center gap-8" aria-label="Main navigation">
+        {navLinks.map(link => (
+          <a
+            href={link.href}
+            class="text-gray-300 hover:text-white text-sm font-medium tracking-wide transition-colors duration-200"
+          >
+            {link.label}
+          </a>
+        ))}
+        <a
+          href={`tel:${client.phone}`}
+          class="ml-4 px-5 py-2 text-sm font-semibold rounded-sm text-white transition-all duration-200"
+          style={`background-color: ${brand.accent}`}
+        >
+          Call Now
+        </a>
+      </nav>
+
+      <!-- Mobile: phone + hamburger -->
+      <div class="flex items-center gap-3 md:hidden">
+        <a
+          href={`tel:${client.phone}`}
+          class="px-4 py-2 text-sm font-semibold rounded-sm text-white"
+          style={`background-color: ${brand.accent}`}
+        >
+          Call
+        </a>
+        <button
+          id="nav-toggle"
+          class="text-gray-300 hover:text-white p-2"
+          aria-label="Toggle menu"
+          aria-expanded="false"
+        >
+          <svg id="icon-open" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+          <svg id="icon-close" class="w-6 h-6 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Mobile drawer -->
+  <div id="mobile-menu" class="hidden md:hidden bg-black/95 border-t border-white/10">
+    <nav class="px-4 py-4 flex flex-col gap-1" aria-label="Mobile navigation">
+      {navLinks.map(link => (
+        <a
+          href={link.href}
+          class="mobile-nav-link text-gray-300 hover:text-white py-3 text-base font-medium border-b border-white/5 last:border-0"
+        >
+          {link.label}
+        </a>
+      ))}
+    </nav>
+  </div>
+</header>
+
+<script>
+  // Logo img is hidden by default — defensive removal if it ever loads with an error.
+  const logoImg = document.querySelector(".logo-img") as HTMLImageElement | null;
+  if (logoImg) {
+    logoImg.addEventListener("error", () => {
+      logoImg.remove();
+    });
+  }
+
+  const toggle = document.getElementById("nav-toggle");
+  const menu = document.getElementById("mobile-menu");
+  const iconOpen = document.getElementById("icon-open");
+  const iconClose = document.getElementById("icon-close");
+
+  toggle?.addEventListener("click", () => {
+    const isOpen = menu?.classList.contains("hidden");
+    menu?.classList.toggle("hidden", !isOpen);
+    iconOpen?.classList.toggle("hidden", isOpen);
+    iconClose?.classList.toggle("hidden", !isOpen);
+    toggle.setAttribute("aria-expanded", String(isOpen));
+  });
+
+  // Close on nav link click
+  document.querySelectorAll(".mobile-nav-link").forEach(link => {
+    link.addEventListener("click", () => {
+      menu?.classList.add("hidden");
+      iconOpen?.classList.remove("hidden");
+      iconClose?.classList.add("hidden");
+      toggle?.setAttribute("aria-expanded", "false");
+    });
+  });
+</script>
